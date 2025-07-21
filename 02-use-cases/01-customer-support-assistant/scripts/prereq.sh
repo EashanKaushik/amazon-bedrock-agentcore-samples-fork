@@ -33,7 +33,7 @@ fi
 # ----- 2. Zip Lambda code -----
 echo "📦 Zipping contents of $LAMBDA_SRC into $ZIP_FILE..."
 cd "$LAMBDA_SRC"
-zip -r "../../$ZIP_FILE" . > /dev/null
+zip -r "../../../$ZIP_FILE" . > /dev/null
 cd - > /dev/null
 
 # ----- 3. Upload to S3 -----

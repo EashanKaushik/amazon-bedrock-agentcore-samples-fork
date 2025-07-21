@@ -14,6 +14,7 @@ This is a customer support agent implementation using AWS Bedrock AgentCore fram
   - [Prerequisites](#prerequisites)
     - [AWS Account Setup](#aws-account-setup)
   - [Deploy](#deploy)
+  - [Sample Queries](#sample-queries)
   - [Scripts](#scripts)
     - [Amazon Bedrock AgentCore Gateway](#amazon-bedrock-agentcore-gateway)
       - [Create Amazon Bedrock AgentCore Gateway](#create-amazon-bedrock-agentcore-gateway)
@@ -27,6 +28,8 @@ This is a customer support agent implementation using AWS Bedrock AgentCore fram
     - [Google Credentials Provider](#google-credentials-provider)
       - [Create Credentials Provider](#create-credentials-provider)
       - [Delete Credentials Provider](#delete-credentials-provider)
+    - [Agent Runtime](#agent-runtime)
+      - [Delete Agent Runtime](#delete-agent-runtime)
   - [Cleanup](#cleanup)
   - [🤝 Contributing](#-contributing)
   - [📄 License](#-license)
@@ -78,10 +81,13 @@ This is a customer support agent implementation using AWS Bedrock AgentCore fram
     ./scripts/list_ssm_parameters.sh
     ```
 
+    > [!CAUTION]
+    > Please prefix all the resource name with `customersupport`.
+
 2. **Create Agentcore Gateway**
 
     ```bash
-    python scripts/agentcore_gateway.py create --name customersupgateway
+    python scripts/agentcore_gateway.py create --name customersupport-gw
     ```
 
 3. **Setup Agentcore Identity**
@@ -133,6 +139,8 @@ This is a customer support agent implementation using AWS Bedrock AgentCore fram
     python test/test_agent.py customersupport<AgentName> -p "Hi"
     ```
 
+    ![code](./images/code.png)
+
 6. **Local Host Streamlit UI**
 
 > [!CAUTION]
@@ -141,6 +149,18 @@ This is a customer support agent implementation using AWS Bedrock AgentCore fram
 ```bash
 streamlit run app.py --server.port 8501 -- --agent=customersupport<AgentName>
 ```
+
+## Sample Queries
+
+1. I have a Gaming Console Pro device , I want to check my warranty status, warranty serial number is MNO33333333.
+
+2. What are the warranty support guidelines ?
+
+3. What’s my agenda for today?
+
+4. Can you create an event to setup call to renew warranty?
+
+5. I have overheating issues  with my device, help me debug.
 
 ## Scripts
 
@@ -225,6 +245,21 @@ python scripts/google_credentials_provider.py delete --name customersupport-goog
 python scripts/google_credentials_provider.py delete --confirm
 ```
 
+### Agent Runtime
+
+#### Delete Agent Runtime
+
+```bash
+# Delete specific agent runtime by name
+python scripts/agentcore_agent_runtime.py customersupport
+
+# Preview what would be deleted without actually deleting
+python scripts/agentcore_agent_runtime.py --dry-run customersupport
+
+# Delete any agent runtime by name
+python scripts/agentcore_agent_runtime.py <agent-name>
+```
+
 ## Cleanup
 
 ```bash
@@ -235,7 +270,10 @@ python scripts/google_credentials_provider.py delete
 python scripts/cognito_credentials_provider.py delete
 python scripts/agentcore_memory.py delete
 python scripts/agentcore_gateway.py delete
-python scripts/agentcore_agent_runtime.py delete
+python scripts/agentcore_agent_runtime.py customersupport<AgentName>
+
+rm .agentcore.yaml
+rm .bedrock_agentcore.yaml
 ```
 
 ## 🤝 Contributing

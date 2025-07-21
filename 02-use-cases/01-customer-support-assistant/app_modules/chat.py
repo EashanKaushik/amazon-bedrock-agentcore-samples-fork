@@ -11,6 +11,7 @@ from .utils import make_urls_clickable, create_safe_markdown_text
 
 class ChatManager:
     def __init__(self, agent_name: str = "default"):
+        self.auth_url_matching = ".amazonaws.com/identities/oauth2/authorize"
         self.agent_name = agent_name
         self._init_session_state()
 
@@ -154,7 +155,7 @@ class ChatManager:
             ):
                 chunk = str(chunk)
                 if chunk.strip():
-                    if ".prod.agent-credential-provider.cognito.aws.dev" in chunk:
+                    if self.auth_url_matching in chunk:
                         accumulated_response = f"Please use {chunk}"
                     else:
                         accumulated_response += chunk
@@ -170,10 +171,7 @@ class ChatManager:
                         message_placeholder,
                     )
 
-                    if (
-                        ".prod.agent-credential-provider.cognito.aws.dev"
-                        in accumulated_response
-                    ):
+                    if self.auth_url_matching in accumulated_response:
                         accumulated_response = str()
 
                     time.sleep(0.02)

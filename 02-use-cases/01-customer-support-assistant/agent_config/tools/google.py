@@ -56,7 +56,7 @@ async def create_calendar_event() -> str:
         end_time = start_time + timedelta(hours=1)
 
         event = {
-            "summary": "Customer Support Call - Maira Ladeira Tanke",
+            "summary": "Customer Support Call",
             "location": "Virtual",
             "description": "This event was created by Customer Support Assistant.",
             "start": {

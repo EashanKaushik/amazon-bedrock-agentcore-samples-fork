@@ -167,8 +167,8 @@ def cli(ctx):
 @click.option("--name", required=True, help="Name for the gateway")
 @click.option(
     "--api-spec-file",
-    default="lambda/api_spec.json",
-    help="Path to the API specification file (default: lambda/api_spec.json)",
+    default="prerequisite/lambda/api_spec.json",
+    help="Path to the API specification file (default: prerequisite/lambda/api_spec.json)",
 )
 def create(name, api_spec_file):
     """Create a new AgentCore gateway."""

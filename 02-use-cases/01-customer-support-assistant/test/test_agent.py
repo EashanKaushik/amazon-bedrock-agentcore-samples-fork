@@ -80,11 +80,11 @@ def invoke_endpoint(
                 # print(line)
                 if line.startswith("data: "):
                     last_data = True
-                    line = line[6:]
+                    line = line[6:].replace('"', "")
                     print(line, end="")
                 elif line:
                     if last_data:
-                        print("\n" + line, end="")
+                        print("\n" + line.replace('"', ""), end="")
                     last_data = False
 
         # print({"response": "\n".join(content)})

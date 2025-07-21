@@ -735,13 +735,13 @@ class KnowledgeBasesForAmazonBedrock:
                 kb_id = kb["knowledgeBaseId"]
         kb_details = self.bedrock_agent_client.get_knowledge_base(knowledgeBaseId=kb_id)
         kb_role = kb_details["knowledgeBase"]["roleArn"].split("/")[1]
+
         vector_bucket_arn = kb_details["knowledgeBase"]["storageConfiguration"][
             "s3VectorsConfiguration"
         ]["vectorBucketArn"]
         # index_name = kb_details["knowledgeBase"]["storageConfiguration"][
         #     "s3VectorsConfiguration"
         # ]["indexName"]
-
         index_arn = kb_details["knowledgeBase"]["storageConfiguration"][
             "s3VectorsConfiguration"
         ]["indexArn"]
