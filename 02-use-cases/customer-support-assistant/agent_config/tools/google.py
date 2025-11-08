@@ -4,9 +4,9 @@ from datetime import datetime, timedelta
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from scripts.utils import get_ssm_parameter
 from strands import tool
 import json
+import os
 
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 
@@ -18,7 +18,7 @@ async def on_auth_url(url: str):
 
 # This annotation helps agent developer to obtain access tokens from external applications
 @requires_access_token(
-    provider_name=get_ssm_parameter("/app/customersupport/agentcore/google_provider"),
+    provider_name=os.environ.get("GOOGLE_PROVIDER_NAME"),
     scopes=SCOPES,  # Google OAuth2 scopes
     auth_flow="USER_FEDERATION",  # On-behalf-of user (3LO) flow
     on_auth_url=on_auth_url,  # prints authorization URL to console

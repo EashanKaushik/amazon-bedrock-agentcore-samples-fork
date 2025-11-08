@@ -7,38 +7,7 @@ This is a customer support agent implementation using Amazon Bedrock AgentCore f
 
 ![architecture](./images/architecture.png)
 
-## Table of Contents
-
-- [Customer Support Agent](#customer-support-agent)
-  - [Table of Contents](#table-of-contents)
-  - [Prerequisites](#prerequisites)
-    - [AWS Account Setup](#aws-account-setup)
-  - [Deploy](#deploy)
-  - [Sample Queries](#sample-queries)
-  - [Scripts](#scripts)
-    - [Amazon Bedrock AgentCore Gateway](#amazon-bedrock-agentcore-gateway)
-      - [Create Amazon Bedrock AgentCore Gateway](#create-amazon-bedrock-agentcore-gateway)
-      - [Delete Amazon Bedrock AgentCore Gateway](#delete-amazon-bedrock-agentcore-gateway)
-    - [Amazon Bedrock AgentCore Memory](#amazon-bedrock-agentcore-memory)
-      - [Create Amazon Bedrock AgentCore Memory](#create-amazon-bedrock-agentcore-memory)
-      - [Delete Amazon Bedrock AgentCore Memory](#delete-amazon-bedrock-agentcore-memory)
-    - [Cognito Credentials Provider](#cognito-credentials-provider)
-      - [Create Cognito Credentials Provider](#create-cognito-credentials-provider)
-      - [Delete Cognito Credentials Provider](#delete-cognito-credentials-provider)
-    - [Google Credentials Provider](#google-credentials-provider)
-      - [Create Credentials Provider](#create-credentials-provider)
-      - [Delete Credentials Provider](#delete-credentials-provider)
-    - [Agent Runtime](#agent-runtime)
-      - [Delete Agent Runtime](#delete-agent-runtime)
-  - [Cleanup](#cleanup)
-  - [🤝 Contributing](#-contributing)
-  - [📄 License](#-license)
-  - [🆘 Support](#-support)
-  - [🔄 Updates](#-updates)
-
-## Prerequisites
-
-### AWS Account Setup
+## AWS Account Setup
 
 1. **AWS Account**: You need an active AWS account with appropriate permissions
    - [Create AWS Account](https://aws.amazon.com/account/)
@@ -145,25 +114,18 @@ This is a customer support agent implementation using Amazon Bedrock AgentCore f
 
    **Note**: The permissions above use `"Resource": "*"` for simplicity. In production environments, you should scope these down to specific resources following the principle of least privilege.
 
-4. **Bedrock Model Access**: Enable access to Amazon Bedrock Anthropic Claude 4.0 models in your AWS region
-   - Navigate to [Amazon Bedrock Console](https://console.aws.amazon.com/bedrock/)
-   - Go to "Model access" and request access to:
-     - Anthropic Claude 4.0 Sonnet model
-     - Anthropic Claude 3.5 Haiku model
-   - [Bedrock Model Access Guide](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html)
-
-5. **Python 3.10+**: Required for running the application
+4. **Python 3.10+**: Required for running the application
    - [Python Downloads](https://www.python.org/downloads/)
 
-6. **uv**: Modern Python package installer and resolver
+5. **uv**: Modern Python package installer and resolver
    - [Install uv](https://github.com/astral-sh/uv)
 
    ```bash
    curl -LsSf https://astral.sh/uv/install.sh | sh
    ```
 
-7. **Create OAuth 2.0 credentials for calendar access** : For Google Calendar integration
-   - Follow [Google OAuth Setup](./prerequisite/google_oauth_setup.md)
+6. **Create OAuth 2.0 credentials for calendar access** : For Google Calendar integration
+   - Follow [Google OAuth Setup](./google_oauth_setup.md)
 
 ## Deploy
 
@@ -279,104 +241,6 @@ uv run streamlit run app.py --server.port 8501 -- --agent=customersupport<AgentN
 
 5. I have overheating issues  with my device, help me debug.
 
-## Scripts
-
-### Amazon Bedrock AgentCore Gateway
-
-#### Create Amazon Bedrock AgentCore Gateway
-
-```bash
-uv run python scripts/agentcore_gateway.py create --name my-gateway
-uv run python scripts/agentcore_gateway.py create --name my-gateway --api-spec-file custom/path.json
-```
-
-#### Delete Amazon Bedrock AgentCore Gateway
-
-```bash
-# Delete gateway (reads from gateway.config automatically)
-uv run python scripts/agentcore_gateway.py delete
-
-# Delete with confirmation skip
-uv run python scripts/agentcore_gateway.py delete --confirm
-```
-
-### Amazon Bedrock AgentCore Memory
-
-#### Create Amazon Bedrock AgentCore Memory
-
-```bash
-uv run python scripts/agentcore_memory.py create --name MyMemory
-uv run python scripts/agentcore_memory.py create --name MyMemory --event-expiry-days 60
-```
-
-#### Delete Amazon Bedrock AgentCore Memory
-
-```bash
-# Delete memory (reads from SSM automatically)
-uv run python scripts/agentcore_memory.py delete
-
-# Delete with confirmation skip
-uv run python scripts/agentcore_memory.py delete --confirm
-```
-
-### Cognito Credentials Provider
-
-#### Create Cognito Credentials Provider
-
-```bash
-uv run python scripts/cognito_credentials_provider.py create --name customersupport-gateways
-```
-
-#### Delete Cognito Credentials Provider
-
-```bash
-# Delete provider (reads name from SSM automatically)
-uv run python scripts/cognito_credentials_provider.py delete
-
-# Delete specific provider by name
-uv run python scripts/cognito_credentials_provider.py delete --name customersupport-gateways
-
-# Delete with confirmation skip
-uv run python scripts/cognito_credentials_provider.py delete --confirm
-```
-
-### Google Credentials Provider
-
-#### Create Credentials Provider
-
-```bash
-uv run python scripts/google_credentials_provider.py create --name customersupport-google-calendar
-uv run python scripts/google_credentials_provider.py create --name my-provider --credentials-file /path/to/credentials.json
-```
-
-#### Delete Credentials Provider
-
-```bash
-# Delete provider (reads name from SSM automatically)
-uv run python scripts/google_credentials_provider.py delete
-
-# Delete specific provider by name
-uv run python scripts/google_credentials_provider.py delete --name customersupport-google-calendar
-
-# Delete with confirmation skip
-uv run python scripts/google_credentials_provider.py delete --confirm
-```
-
-### Agent Runtime
-
-#### Delete Agent Runtime
-
-```bash
-# Delete specific agent runtime by name
-uv run python scripts/agentcore_agent_runtime.py customersupport
-
-# Preview what would be deleted without actually deleting
-uv run python scripts/agentcore_agent_runtime.py --dry-run customersupport
-
-# Delete any agent runtime by name
-uv run python scripts/agentcore_agent_runtime.py <agent-name>
-```
-
 ## Cleanup
 
 ```bash
@@ -392,25 +256,3 @@ uv run python scripts/agentcore_agent_runtime.py customersupport<AgentName>
 rm .agentcore.yaml
 rm .bedrock_agentcore.yaml
 ```
-
-## 🤝 Contributing
-
-We welcome contributions! Please see our [Contributing Guidelines](../../CONTRIBUTING.md) for details on:
-
-- Adding new samples
-- Improving existing examples
-- Reporting issues
-- Suggesting enhancements
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](../../LICENSE) file for details.
-
-## 🆘 Support
-
-- **Issues**: Report bugs or request features via [GitHub Issues](https://github.com/awslabs/amazon-bedrock-agentcore-samples/issues)
-- **Documentation**: Check individual folder READMEs for specific guidance
-
-## 🔄 Updates
-
-This repository is actively maintained and updated with new capabilities and examples. Watch the repository to stay updated with the latest additions.

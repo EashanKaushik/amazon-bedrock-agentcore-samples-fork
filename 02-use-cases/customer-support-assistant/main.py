@@ -3,7 +3,6 @@ from agent_config.access_token import get_gateway_access_token
 from agent_config.agent_task import agent_task
 from agent_config.streaming_queue import StreamingQueue
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
-from scripts.utils import get_ssm_parameter
 import asyncio
 import logging
 import os
@@ -11,10 +10,6 @@ import os
 # Environment flags
 os.environ["STRANDS_OTEL_ENABLE_CONSOLE_EXPORT"] = "true"
 os.environ["STRANDS_TOOL_CONSOLE_MODE"] = "enabled"
-
-os.environ["KNOWLEDGE_BASE_ID"] = get_ssm_parameter(
-    "/app/customersupport/knowledge_base/knowledge_base_id"
-)
 
 # Logging setup
 logging.basicConfig(level=logging.INFO)

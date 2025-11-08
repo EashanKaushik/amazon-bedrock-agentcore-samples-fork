@@ -1,0 +1,713 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Cognito User Pool with OAuth 2.0 for Customer Support System. Supports both machine-to-machine (M2M) authentication via client credentials and web application authentication via authorization code flow. Includes KMS encryption for secrets and automated secret management.'
+
+Metadata:
+  'AWS::CloudFormation::Interface':
+    ParameterGroups:
+    - Label:
+        default: 'Environment Configuration'
+      Parameters:
+      - Environment
+    - Label:
+        default: 'Cognito Configuration'
+      Parameters:
+      - UserPoolName
+      - MachineAppClientName
+      - WebAppClientName
+    - Label:
+        default: 'Admin User Configuration (Optional)'
+      Parameters:
+      - AdminUserEmail
+      - AdminUserPassword
+
+Parameters:
+  Environment:
+    Type: String
+    Default: 'dev'
+    AllowedValues:
+      - dev
+      - test
+      - prod
+    Description: 'Environment name for resource naming'
+
+  UserPoolName:
+    Type: String
+    Default: 'CustomerSupportGatewayPool'
+    Description: 'Name of the Cognito User Pool'
+
+  MachineAppClientName:
+    Type: String
+    Default: 'gatewayclient'
+    Description: 'Name of the machine-to-machine application client'
+
+  WebAppClientName:
+    Type: String
+    Default: 'webuserpoolclient'
+    Description: 'Name of the web application client'
+
+  AdminUserEmail:
+    Type: String
+    Default: ''
+    Description: 'Optional: Admin user email to create automatically (leave empty to skip user creation)'
+
+  AdminUserPassword:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: 'Optional: Admin user password (leave empty for auto-generated temporary password sent via email)'
+
+Resources:
+  # Cognito User Pool
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: F78
+            reason: "MFA not applicable for M2M authentication using client credentials flow"
+    Properties:
+      UserPoolName: !Sub '${UserPoolName}-${Environment}'
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      MfaConfiguration: 'OFF'
+      UsernameConfiguration:
+        CaseSensitive: false
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
+      UserPoolTags:
+        Name: !Sub '${UserPoolName}-${Environment}'
+        Purpose: 'Customer Support Authentication'
+        Environment: !Ref Environment
+
+  # User Pool Domain for OAuth endpoints
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Sub 'cs-${Environment}-${AWS::AccountId}'
+      UserPoolId: !Ref UserPool
+
+  # Resource Server for OAuth scopes
+  ResourceServer:
+    Type: AWS::Cognito::UserPoolResourceServer
+    Properties:
+      UserPoolId: !Ref UserPool
+      Identifier: !Sub 'customersupport-${Environment}-resource-server'
+      Name: !Sub 'Customer Support ${Environment} Resource Server'
+      Scopes:
+        - ScopeName: 'read'
+          ScopeDescription: 'Read access to customer support resources'
+        - ScopeName: 'write'
+          ScopeDescription: 'Write access to customer support resources'
+        - ScopeName: 'gateway'
+          ScopeDescription: 'Gateway-specific access for tool invocation'
+
+  # Machine Client for M2M Authentication (Gateway)
+  MachineUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    DependsOn: ResourceServer
+    Properties:
+      ClientName: !Ref MachineAppClientName
+      UserPoolId: !Ref UserPool
+      GenerateSecret: true
+      ExplicitAuthFlows: []
+      SupportedIdentityProviders:
+        - COGNITO
+      AllowedOAuthFlows:
+        - client_credentials
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthScopes:
+        - !Sub 'customersupport-${Environment}-resource-server/read'
+        - !Sub 'customersupport-${Environment}-resource-server/gateway'
+      AccessTokenValidity: 1
+      IdTokenValidity: 1
+      RefreshTokenValidity: 1
+      TokenValidityUnits:
+        AccessToken: hours
+        IdToken: hours
+        RefreshToken: days
+      PreventUserExistenceErrors: 'ENABLED'
+      EnableTokenRevocation: true
+
+  # Web User Pool Client for web applications
+  WebUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    DependsOn: ResourceServer
+    Properties:
+      ClientName: !Ref WebAppClientName
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false  # Public client for PKCE flow
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthScopes:
+        - openid
+        - email
+        - profile
+        - !Sub 'customersupport-${Environment}-resource-server/read'
+        - !Sub 'customersupport-${Environment}-resource-server/write'
+      AllowedOAuthFlowsUserPoolClient: true
+      CallbackURLs:
+        - http://localhost:8501/
+        - https://example.com/auth/callback
+        - http://localhost:8080/callback
+        - http://localhost:5173/
+      LogoutURLs:
+        - http://localhost:8501/
+        - http://localhost:5173/
+      SupportedIdentityProviders:
+        - COGNITO
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      RefreshTokenValidity: 30
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+      EnableTokenRevocation: true
+      PreventUserExistenceErrors: 'ENABLED'
+
+  # KMS Key for Secrets Manager encryption
+  SecretsManagerKMSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: !Sub 'KMS key for Customer Support ${Environment} Cognito secrets encryption'
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow Secrets Manager access
+            Effect: Allow
+            Principal:
+              Service: secretsmanager.amazonaws.com
+            Action:
+              - kms:Decrypt
+              - kms:GenerateDataKey
+            Resource: '*'
+      KeyUsage: ENCRYPT_DECRYPT
+      KeySpec: SYMMETRIC_DEFAULT
+      Tags:
+        - Key: Application
+          Value: CustomerSupport
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Purpose
+          Value: Secrets-Encryption
+
+  SecretsManagerKMSKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub 'alias/customersupport-${Environment}-secrets-key'
+      TargetKeyId: !Ref SecretsManagerKMSKey
+
+  # Secrets Manager Secret for Gateway Client
+  GatewayClientSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub 'customersupport-${Environment}/gateway/client-config'
+      Description: !Sub 'Gateway client configuration for ${Environment} environment'
+      KmsKeyId: !Ref SecretsManagerKMSKey
+      SecretString: !Sub |
+        {
+          "client_id": "${MachineUserPoolClient}",
+          "user_pool_id": "${UserPool}",
+          "token_endpoint": "https://${UserPoolDomain}.auth.${AWS::Region}.amazoncognito.com/oauth2/token",
+          "cognito_discovery_url": "https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}/.well-known/openid-configuration"
+        }
+      Tags:
+        - Key: Application
+          Value: CustomerSupport
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Purpose
+          Value: M2M-Authentication
+
+  # IAM Role for Client Secret Lambda
+  ClientSecretLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: CognitoClientSecretAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cognito-idp:DescribeUserPoolClient
+                Resource: !GetAtt UserPool.Arn
+              - Effect: Allow
+                Action:
+                  - secretsmanager:UpdateSecret
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref GatewayClientSecret
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:GenerateDataKey
+                Resource: !GetAtt SecretsManagerKMSKey.Arn
+
+  # Lambda function to update secret with client secret
+  ClientSecretLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'customersupport-${Environment}-client-secret-handler'
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Role: !GetAtt ClientSecretLambdaRole.Arn
+      Timeout: 60
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import urllib3
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          def lambda_handler(event, context):
+              try:
+                  logger.info(f"Received event: {json.dumps(event)}")
+
+                  request_type = event['RequestType']
+                  if request_type == 'Delete':
+                      send_response(event, context, 'SUCCESS', {})
+                      return
+
+                  # Get properties from the event
+                  properties = event['ResourceProperties']
+                  user_pool_id = properties['UserPoolId']
+                  client_id = properties['ClientId']
+                  secret_arn = properties['SecretArn']
+                  client_type = properties['ClientType']
+
+                  # Initialize boto3 clients
+                  cognito_client = boto3.client('cognito-idp')
+                  secrets_client = boto3.client('secretsmanager')
+
+                  # Get client configuration from Cognito
+                  response = cognito_client.describe_user_pool_client(
+                      UserPoolId=user_pool_id,
+                      ClientId=client_id
+                  )
+
+                  user_pool_client = response['UserPoolClient']
+
+                  # Get existing secret value
+                  secret_response = secrets_client.get_secret_value(SecretId=secret_arn)
+                  secret_data = json.loads(secret_response['SecretString'])
+
+                  # Update client_secret if available (confidential clients only)
+                  if 'ClientSecret' in user_pool_client:
+                      client_secret = user_pool_client['ClientSecret']
+                      secret_data['client_secret'] = client_secret
+                      logger.info(f"Updated {client_type} client secret (confidential client)")
+                  else:
+                      secret_data['client_secret'] = secret_data.get('client_secret', 'NOT_APPLICABLE_PUBLIC_CLIENT')
+                      logger.info(f"{client_type} is a public client (no secret)")
+
+                  # Update the secret
+                  secrets_client.update_secret(
+                      SecretId=secret_arn,
+                      SecretString=json.dumps(secret_data, indent=2)
+                  )
+
+                  logger.info(f"Successfully updated {client_type} client configuration")
+                  send_response(event, context, 'SUCCESS', {'ClientSecretUpdated': 'true'})
+
+              except Exception as e:
+                  logger.error(f"Error: {str(e)}", exc_info=True)
+                  send_response(event, context, 'FAILED', {'Error': str(e)})
+
+          def send_response(event, context, response_status, response_data):
+              response_body = {
+                  'Status': response_status,
+                  'Reason': f'See CloudWatch Log Stream: {context.log_stream_name}',
+                  'PhysicalResourceId': context.log_stream_name,
+                  'StackId': event['StackId'],
+                  'RequestId': event['RequestId'],
+                  'LogicalResourceId': event['LogicalResourceId'],
+                  'Data': response_data
+              }
+
+              json_response_body = json.dumps(response_body)
+
+              headers = {
+                  'content-type': '',
+                  'content-length': str(len(json_response_body))
+              }
+
+              http = urllib3.PoolManager()
+              response = http.request('PUT', event['ResponseURL'], body=json_response_body, headers=headers)
+              logger.info(f"Response status: {response.status}")
+
+  # Custom resource to update Gateway client secret
+  GatewayClientSecretUpdater:
+    Type: AWS::CloudFormation::CustomResource
+    DependsOn: GatewayClientSecret
+    Properties:
+      ServiceToken: !GetAtt ClientSecretLambda.Arn
+      UserPoolId: !Ref UserPool
+      ClientId: !Ref MachineUserPoolClient
+      SecretArn: !Ref GatewayClientSecret
+      ClientType: Gateway
+
+  # IAM Role for User Creation Lambda
+  UserCreationLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: CognitoUserManagement
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cognito-idp:AdminCreateUser
+                  - cognito-idp:AdminSetUserPassword
+                  - cognito-idp:AdminAddUserToGroup
+                Resource: !GetAtt UserPool.Arn
+
+  # Lambda Function for User Creation
+  UserCreationLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'customersupport-${Environment}-user-creation'
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Role: !GetAtt UserCreationLambdaRole.Arn
+      Timeout: 60
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import urllib3
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          def lambda_handler(event, context):
+              try:
+                  logger.info(f"Received event: {json.dumps(event)}")
+
+                  request_type = event['RequestType']
+
+                  # Only create users on stack creation
+                  if request_type == 'Delete' or request_type == 'Update':
+                      send_response(event, context, 'SUCCESS', {})
+                      return
+
+                  # Get properties from the event
+                  properties = event['ResourceProperties']
+                  user_pool_id = properties['UserPoolId']
+                  user_email = properties.get('UserEmail', '')
+                  user_password = properties.get('UserPassword', '')
+
+                  # Skip if no email provided
+                  if not user_email:
+                      logger.info("No user email provided, skipping user creation")
+                      send_response(event, context, 'SUCCESS', {'UserCreated': 'false'})
+                      return
+
+                  # Initialize Cognito client
+                  cognito_client = boto3.client('cognito-idp')
+
+                  # Prepare user creation parameters
+                  create_params = {
+                      'UserPoolId': user_pool_id,
+                      'Username': user_email,
+                      'UserAttributes': [
+                          {
+                              'Name': 'email',
+                              'Value': user_email
+                          },
+                          {
+                              'Name': 'email_verified',
+                              'Value': 'true'
+                          }
+                      ],
+                      'DesiredDeliveryMediums': ['EMAIL']
+                  }
+
+                  # Add password if provided, otherwise Cognito will generate one
+                  if user_password:
+                      create_params['TemporaryPassword'] = user_password
+                      create_params['MessageAction'] = 'SUPPRESS'  # Don't send email if password provided
+
+                  # Create the user
+                  try:
+                      response = cognito_client.admin_create_user(**create_params)
+                      logger.info(f"User created successfully: {user_email}")
+
+                      # If password was provided, set it as permanent
+                      if user_password:
+                          cognito_client.admin_set_user_password(
+                              UserPoolId=user_pool_id,
+                              Username=user_email,
+                              Password=user_password,
+                              Permanent=True
+                          )
+                          logger.info(f"Password set as permanent for user: {user_email}")
+
+                      send_response(event, context, 'SUCCESS', {
+                          'UserCreated': 'true',
+                          'Username': user_email
+                      })
+
+                  except cognito_client.exceptions.UsernameExistsException:
+                      logger.info(f"User already exists: {user_email}")
+                      send_response(event, context, 'SUCCESS', {
+                          'UserCreated': 'false',
+                          'Message': 'User already exists'
+                      })
+
+              except Exception as e:
+                  logger.error(f"Error: {str(e)}", exc_info=True)
+                  send_response(event, context, 'FAILED', {'Error': str(e)})
+
+          def send_response(event, context, response_status, response_data):
+              response_body = {
+                  'Status': response_status,
+                  'Reason': f'See CloudWatch Log Stream: {context.log_stream_name}',
+                  'PhysicalResourceId': context.log_stream_name,
+                  'StackId': event['StackId'],
+                  'RequestId': event['RequestId'],
+                  'LogicalResourceId': event['LogicalResourceId'],
+                  'Data': response_data
+              }
+
+              json_response_body = json.dumps(response_body)
+
+              headers = {
+                  'content-type': '',
+                  'content-length': str(len(json_response_body))
+              }
+
+              http = urllib3.PoolManager()
+              response = http.request('PUT', event['ResponseURL'], body=json_response_body, headers=headers)
+              logger.info(f"Response status: {response.status}")
+
+  # Custom Resource to Create Admin User
+  AdminUserCreator:
+    Type: AWS::CloudFormation::CustomResource
+    Condition: CreateAdminUser
+    DependsOn: UserPool
+    Properties:
+      ServiceToken: !GetAtt UserCreationLambda.Arn
+      UserPoolId: !Ref UserPool
+      UserEmail: !Ref AdminUserEmail
+      UserPassword: !Ref AdminUserPassword
+
+  # SSM Parameters for backward compatibility
+  CognitoMachineClientIdParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /app/customersupport/agentcore/machine_client_id
+      Type: String
+      Value: !Ref MachineUserPoolClient
+      Description: Machine Cognito client ID
+      Tags:
+        Application: CustomerSupport
+        Environment: !Ref Environment
+
+  CognitoWebClientIdParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /app/customersupport/agentcore/web_client_id
+      Type: String
+      Value: !Ref WebUserPoolClient
+      Description: Cognito client ID for web app
+      Tags:
+        Application: CustomerSupport
+        Environment: !Ref Environment
+
+  UserPoolIdParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /app/customersupport/agentcore/userpool_id
+      Type: String
+      Value: !Ref UserPool
+      Description: Cognito User Pool ID
+      Tags:
+        Application: CustomerSupport
+        Environment: !Ref Environment
+
+  CognitoDiscoveryURLParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /app/customersupport/agentcore/cognito_discovery_url
+      Type: String
+      Value: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}/.well-known/openid-configuration'
+      Description: OAuth2 Discovery URL
+      Tags:
+        Application: CustomerSupport
+        Environment: !Ref Environment
+
+  CognitoTokenURLParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /app/customersupport/agentcore/cognito_token_url
+      Type: String
+      Value: !Sub 'https://${UserPoolDomain}.auth.${AWS::Region}.amazoncognito.com/oauth2/token'
+      Description: OAuth2 Token URL
+      Tags:
+        Application: CustomerSupport
+        Environment: !Ref Environment
+
+  CognitoAuthorizeURLParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /app/customersupport/agentcore/cognito_auth_url
+      Type: String
+      Value: !Sub 'https://${UserPoolDomain}.auth.${AWS::Region}.amazoncognito.com/oauth2/authorize'
+      Description: OAuth2 Authorization URL
+      Tags:
+        Application: CustomerSupport
+        Environment: !Ref Environment
+
+  CognitoDomainParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /app/customersupport/agentcore/cognito_domain
+      Type: String
+      Value: !Sub 'https://${UserPoolDomain}.auth.${AWS::Region}.amazoncognito.com'
+      Description: Cognito hosted domain for OAuth2
+      Tags:
+        Application: CustomerSupport
+        Environment: !Ref Environment
+
+Conditions:
+  CreateAdminUser: !Not [!Equals [!Ref AdminUserEmail, '']]
+
+Outputs:
+  StackName:
+    Description: 'Stack name for cross-stack references'
+    Value: !Ref AWS::StackName
+    Export:
+      Name: !Sub '${AWS::StackName}-StackName'
+
+  UserPoolId:
+    Description: 'Cognito User Pool ID'
+    Value: !Ref UserPool
+    Export:
+      Name: !Sub '${AWS::StackName}-UserPoolId'
+
+  UserPoolArn:
+    Description: 'Cognito User Pool ARN'
+    Value: !GetAtt UserPool.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-UserPoolArn'
+
+  UserPoolDomain:
+    Description: 'Cognito User Pool Domain'
+    Value: !Sub '${UserPoolDomain}.auth.${AWS::Region}.amazoncognito.com'
+    Export:
+      Name: !Sub '${AWS::StackName}-UserPoolDomain'
+
+  ResourceServerIdentifier:
+    Description: 'Resource Server Identifier'
+    Value: !Ref ResourceServer
+    Export:
+      Name: !Sub '${AWS::StackName}-ResourceServerIdentifier'
+
+  GatewayClientId:
+    Description: 'Gateway Client ID (Machine-to-Machine)'
+    Value: !Ref MachineUserPoolClient
+    Export:
+      Name: !Sub '${AWS::StackName}-GatewayClientId'
+
+  WebClientId:
+    Description: 'Web Client ID for web applications'
+    Value: !Ref WebUserPoolClient
+    Export:
+      Name: !Sub '${AWS::StackName}-WebClientId'
+
+  GatewayClientSecret:
+    Description: 'Gateway Client Secret ARN in Secrets Manager'
+    Value: !Ref GatewayClientSecret
+    Export:
+      Name: !Sub '${AWS::StackName}-GatewayClientSecret'
+
+  GatewayClientSecretArn:
+    Description: 'Gateway Client Secret ARN (for IAM permissions)'
+    Value: !Ref GatewayClientSecret
+    Export:
+      Name: !Sub '${AWS::StackName}-GatewayClientSecretArn'
+
+  DiscoveryUrl:
+    Description: 'OpenID Connect Discovery URL'
+    Value: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}/.well-known/openid-configuration'
+    Export:
+      Name: !Sub '${AWS::StackName}-DiscoveryUrl'
+
+  TokenEndpoint:
+    Description: 'OAuth2 Token Endpoint'
+    Value: !Sub 'https://${UserPoolDomain}.auth.${AWS::Region}.amazoncognito.com/oauth2/token'
+    Export:
+      Name: !Sub '${AWS::StackName}-TokenEndpoint'
+
+  AuthorizationEndpoint:
+    Description: 'OAuth2 Authorization Endpoint'
+    Value: !Sub 'https://${UserPoolDomain}.auth.${AWS::Region}.amazoncognito.com/oauth2/authorize'
+    Export:
+      Name: !Sub '${AWS::StackName}-AuthorizationEndpoint'
+
+  SecretsManagerKMSKeyArn:
+    Description: 'KMS Key ARN for Secrets Manager encryption'
+    Value: !GetAtt SecretsManagerKMSKey.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-SecretsManagerKMSKeyArn'
+
+  GatewayScopes:
+    Description: 'Available OAuth scopes for Gateway Client'
+    Value: !Sub 'customersupport-${Environment}-resource-server/read customersupport-${Environment}-resource-server/gateway'
+    Export:
+      Name: !Sub '${AWS::StackName}-GatewayScopes'
+
+  WebClientScopes:
+    Description: 'Available OAuth scopes for Web Client'
+    Value: !Sub 'customersupport-${Environment}-resource-server/read customersupport-${Environment}-resource-server/write'
+    Export:
+      Name: !Sub '${AWS::StackName}-WebClientScopes'
+
+  AdminUserEmail:
+    Condition: CreateAdminUser
+    Description: 'Admin user email address'
+    Value: !Ref AdminUserEmail
+
+  AdminUserNote:
+    Condition: CreateAdminUser
+    Description: 'Admin user access information'
+    Value: !If
+      - CreateAdminUser
+      - !Sub 'Admin user created with email: ${AdminUserEmail}. Use provided password or check email for temporary password.'
+      - 'No admin user created'

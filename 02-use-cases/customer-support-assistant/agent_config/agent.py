@@ -1,4 +1,4 @@
-from .utils import get_ssm_parameter
+import os
 from agent_config.memory_hook_provider import MemoryHook
 from mcp.client.streamable_http import streamablehttp_client
 from strands import Agent
@@ -27,7 +27,7 @@ class CustomerSupport:
             else """
     You are a helpful customer support agent ready to assist customers with their inquiries and service needs.
     You have access to tools to: check warrant status, view customer profiles, and retrieve Knowledgebase.
-    
+
     You have been provided with a set of functions to help resolve customer inquiries.
     You will ALWAYS follow the below guidelines when assisting customers:
     <guidelines>
@@ -41,7 +41,11 @@ class CustomerSupport:
     """
         )
 
-        gateway_url = get_ssm_parameter("/app/customersupport/agentcore/gateway_url")
+        # Get Gateway URL from environment variable
+        gateway_url = os.environ.get("GATEWAY_URL")
+        if not gateway_url:
+            raise ValueError("GATEWAY_URL environment variable is not set")
+
         print(f"Gateway Endpoint - MCP URL: {gateway_url}")
 
         try:

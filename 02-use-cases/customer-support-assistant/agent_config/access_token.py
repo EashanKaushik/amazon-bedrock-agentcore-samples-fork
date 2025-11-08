@@ -1,9 +1,9 @@
-from .utils import get_ssm_parameter
+import os
 from bedrock_agentcore.identity.auth import requires_access_token
 
 
 @requires_access_token(
-    provider_name=get_ssm_parameter("/app/customersupport/agentcore/cognito_provider"),
+    provider_name=os.environ.get("GATEWAY_PROVIDER_NAME"),
     scopes=[],  # Optional unless required
     auth_flow="M2M",
 )

@@ -1,0 +1,295 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "CloudFormation template for Google OAuth2 Credential Provider for AgentCore"
+
+Parameters:
+  Environment:
+    Type: String
+    Description: Environment name (e.g., dev, staging, prod)
+    Default: dev
+    AllowedPattern: '^[a-z0-9-]+$'
+    ConstraintDescription: Must contain only lowercase letters, numbers, and hyphens
+
+  GoogleClientId:
+    Type: String
+    Description: Google OAuth2 Client ID from credentials.json
+    NoEcho: true
+
+  GoogleClientSecret:
+    Type: String
+    Description: Google OAuth2 Client Secret from credentials.json
+    NoEcho: true
+
+Resources:
+  # KMS Key for Google Credentials Encryption
+  GoogleCredentialsKMSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: !Sub 'KMS key for encrypting Google OAuth2 credentials - ${Environment}'
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow Lambda to use the key
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action:
+              - 'kms:Decrypt'
+              - 'kms:DescribeKey'
+            Resource: '*'
+            Condition:
+              StringEquals:
+                'kms:ViaService': !Sub 'secretsmanager.${AWS::Region}.amazonaws.com'
+      Tags:
+        - Key: Name
+          Value: !Sub 'customersupport-${Environment}-google-credentials-key'
+        - Key: Environment
+          Value: !Ref Environment
+
+  GoogleCredentialsKMSKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub 'alias/customersupport-${Environment}-google-credentials-key'
+      TargetKeyId: !Ref GoogleCredentialsKMSKey
+
+  # Secrets Manager Secret for Google Credentials
+  GoogleCredentialsSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub 'customersupport-${Environment}/google/credentials'
+      Description: !Sub 'Google OAuth2 credentials for ${Environment} environment'
+      KmsKeyId: !Ref GoogleCredentialsKMSKey
+      SecretString: !Sub |
+        {
+          "client_id": "${GoogleClientId}",
+          "client_secret": "${GoogleClientSecret}"
+        }
+      Tags:
+        - Key: Name
+          Value: !Sub 'customersupport-${Environment}-google-credentials'
+        - Key: Environment
+          Value: !Ref Environment
+
+  # IAM Role for Google Provider Management Lambda
+  GoogleProviderManagementLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: SecretsManagerAccessPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref GoogleCredentialsSecret
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:DescribeKey
+                Resource: !GetAtt GoogleCredentialsKMSKey.Arn
+        - PolicyName: BedrockIdentityAccessPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock-agentcore:GetResourceOauth2Token
+                  - bedrock-agentcore:CreateOauth2CredentialProvider
+                  - bedrock-agentcore:DeleteOauth2CredentialProvider
+                  - bedrock-agentcore:UpdateOauth2CredentialProvider
+                  - bedrock-agentcore:ListOauth2CredentialProviders
+                  - bedrock-agentcore:GetOauth2CredentialProvider
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - secretsmanager:CreateSecret
+                  - secretsmanager:DeleteSecret
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - bedrock-agentcore:ListWorkloadIdentities
+                  - bedrock-agentcore:UpdateWorkloadIdentity
+                  - bedrock-agentcore:DeleteWorkloadIdentity
+                  - bedrock-agentcore:CreateWorkloadIdentity
+                Resource:
+                  - !Sub 'arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/*/workload-identity/*'
+                  - !Sub 'arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/*'
+              - Effect: Allow
+                Action:
+                  - bedrock-agentcore:GetTokenVault
+                  - bedrock-agentcore:CreateTokenVault
+                  - bedrock-agentcore:DeleteTokenVault
+                Resource: "*"
+
+  # Google Provider Management Lambda Function
+  GoogleProviderManagementFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'customersupport-${Environment}-google-provider-management'
+      Runtime: python3.13
+      Handler: index.lambda_handler
+      Role: !GetAtt GoogleProviderManagementLambdaRole.Arn
+      Timeout: 300
+      Environment:
+        Variables:
+          GOOGLE_CREDENTIALS_SECRET_ARN: !Ref GoogleCredentialsSecret
+      Code:
+        ZipFile: |
+          import json
+          import os
+          import boto3
+          import cfnresponse
+          import logging
+          from botocore.exceptions import ClientError
+
+          # Configure logging
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          def lambda_handler(event, context):
+              try:
+                  logger.info(f"Received event: {json.dumps(event, default=str)}")
+
+                  request_type = event['RequestType']
+                  properties = event['ResourceProperties']
+
+                  # Initialize Bedrock AgentCore client
+                  identity_client = boto3.client('bedrock-agentcore-control')
+
+                  if request_type == 'Create':
+                      response_data = create_credential_provider(identity_client, properties)
+                  elif request_type == 'Delete':
+                      response_data = delete_credential_provider(identity_client, properties)
+                  else:
+                      response_data = {'Message': f'No action taken for request type: {request_type}'}
+
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
+
+              except Exception as e:
+                  logger.error(f"Error in Google provider management: {str(e)}")
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': str(e)})
+
+          def create_credential_provider(identity_client, properties):
+              """Create Google OAuth2 credential provider"""
+              try:
+                  provider_name = properties['ProviderName']
+
+                  # Get Google credentials from Secrets Manager
+                  secrets_client = boto3.client('secretsmanager')
+                  secret_arn = os.environ['GOOGLE_CREDENTIALS_SECRET_ARN']
+
+                  secret_response = secrets_client.get_secret_value(SecretId=secret_arn)
+                  secret_data = json.loads(secret_response['SecretString'])
+
+                  client_id = secret_data['client_id']
+                  client_secret = secret_data['client_secret']
+
+                  # Create Google OAuth2 credential provider
+                  response = identity_client.create_oauth2_credential_provider(
+                      name=provider_name,
+                      credentialProviderVendor="GoogleOauth2",
+                      oauth2ProviderConfigInput={
+                          "googleOauth2ProviderConfig": {
+                              "clientId": client_id,
+                              "clientSecret": client_secret,
+                          }
+                      },
+                  )
+
+                  logger.info(f"Google OAuth2 credential provider created successfully: {provider_name}")
+                  logger.info(f"Response: {json.dumps(response, default=str)}")
+
+                  # Extract the important values from response
+                  client_secret_arn = response.get('clientSecretArn', {}).get('secretArn', '')
+                  credential_provider_arn = response.get('credentialProviderArn', '')
+
+                  return {
+                      'Message': 'Google OAuth2 credential provider created successfully',
+                      'ProviderName': provider_name,
+                      'ClientSecretArn': client_secret_arn,
+                      'CredentialProviderArn': credential_provider_arn
+                  }
+
+              except Exception as e:
+                  logger.error(f"Error creating Google OAuth2 credential provider: {str(e)}")
+                  raise
+
+          def delete_credential_provider(identity_client, properties):
+              """Delete Google OAuth2 credential provider"""
+              try:
+                  provider_name = properties['ProviderName']
+                  identity_client.delete_oauth2_credential_provider(name=provider_name)
+                  logger.info(f"Google OAuth2 credential provider deleted: {provider_name}")
+
+                  return {
+                      'Message': f'Google OAuth2 credential provider {provider_name} deleted successfully'
+                  }
+
+              except Exception as e:
+                  logger.error(f"Error deleting Google OAuth2 credential provider: {str(e)}")
+                  raise
+
+  # Custom Resource to create Google OAuth2 Credential Provider
+  GoogleOAuth2Provider:
+    Type: AWS::CloudFormation::CustomResource
+    Properties:
+      ServiceToken: !GetAtt GoogleProviderManagementFunction.Arn
+      ProviderName: !Sub 'GoogleOAuth2Provider-customersupport-${Environment}'
+
+  # SSM Parameter for Google Provider Name
+  GoogleProviderNameParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /app/customersupport/agentcore/google_provider
+      Type: String
+      Value: !Sub 'GoogleOAuth2Provider-customersupport-${Environment}'
+      Description: Google OAuth2 provider name for AgentCore
+      Tags:
+        Application: CustomerSupport
+        Environment: !Ref Environment
+
+Outputs:
+  GoogleProviderName:
+    Description: Google OAuth2 provider name
+    Value: !Sub 'GoogleOAuth2Provider-customersupport-${Environment}'
+    Export:
+      Name: !Sub '${AWS::StackName}-GoogleProviderName'
+
+  GoogleCredentialProviderArn:
+    Description: ARN of the Google OAuth2 credential provider
+    Value: !GetAtt GoogleOAuth2Provider.CredentialProviderArn
+    Export:
+      Name: !Sub '${AWS::StackName}-GoogleCredentialProviderArn'
+
+  GoogleClientSecretArn:
+    Description: ARN of the Google client secret stored in Secrets Manager by AgentCore
+    Value: !GetAtt GoogleOAuth2Provider.ClientSecretArn
+    Export:
+      Name: !Sub '${AWS::StackName}-GoogleClientSecretArn'
+
+  GoogleCredentialsSecretArn:
+    Description: ARN of the Google credentials secret (input credentials)
+    Value: !Ref GoogleCredentialsSecret
+    Export:
+      Name: !Sub '${AWS::StackName}-GoogleCredentialsSecretArn'
+
+  GoogleCredentialsKMSKeyArn:
+    Description: ARN of the KMS key used for Google credentials encryption
+    Value: !GetAtt GoogleCredentialsKMSKey.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-GoogleCredentialsKMSKeyArn'

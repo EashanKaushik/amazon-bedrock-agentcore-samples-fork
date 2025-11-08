@@ -1,0 +1,6 @@
+ignore_checks:
+  - E3006  # S3 Vectors resources are new (Oct 31, 2025) and not yet in cfn-lint specs
+  - E3003  # S3_VECTORS is a valid storage type but not yet in cfn-lint specs
+  - E3018  # S3VectorsConfiguration is valid but not yet in cfn-lint specs
+  - E3030  # S3_VECTORS is a valid Type value but not yet in cfn-lint specs
+  - E3002  # S3VectorsConfiguration is a valid property but not yet in cfn-lint specs

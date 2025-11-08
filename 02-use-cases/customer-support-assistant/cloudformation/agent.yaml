@@ -1,0 +1,855 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Bedrock AgentCore agent runtime with HTTP protocol. Deploys containerized agent in ECR with access to Gateway tools and Knowledge Base. Includes CodeBuild pipeline for Docker builds, OAuth2 provider setup, and EventBridge automation for container updates.'
+
+
+Metadata:
+  'AWS::CloudFormation::Interface':
+    ParameterGroups:
+    - Label:
+        default: 'Environment Configuration'
+      Parameters:
+      - Environment
+      - ModelID
+    - Label:
+        default: 'Stack References'
+      Parameters:
+      - CognitoStackName
+      - GatewayStackName
+      - GoogleProviderStackName
+      - KnowledgeBaseId
+      - KnowledgeBaseArn
+
+Parameters:
+  Environment:
+    Type: String
+    Default: 'dev'
+    AllowedValues:
+      - dev
+      - test
+      - prod
+    Description: 'Environment name for resource naming'
+
+  CognitoStackName:
+    Type: String
+    Description: 'Name of the Cognito stack to reference for client configuration'
+
+  GatewayStackName:
+    Type: String
+    Description: 'Name of the Gateway stack to reference for Gateway URL'
+
+  GoogleProviderStackName:
+    Type: String
+    Description: 'Name of the Google Provider stack to reference for Google OAuth2 provider'
+
+  KnowledgeBaseId:
+    Type: String
+    Description: 'Id of the Knowledge Base'
+
+  KnowledgeBaseArn:
+    Type: String
+    Description: 'Arn of the Knowledge Base'
+
+  ModelID:
+    Type: String
+    Default: 'us.anthropic.claude-sonnet-4-20250514-v1:0'
+    Description: 'Name of the model to use with Agent'
+
+Resources:
+  # ECR Repository for Agent Docker Images
+  AgentECRRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub 'bedrock-agentcore-customersupport-${Environment}'
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "selection": {
+                  "tagStatus": "untagged",
+                  "countType": "sinceImagePushed",
+                  "countUnit": "days",
+                  "countNumber": 1
+                },
+                "action": {
+                  "type": "expire"
+                }
+              },
+              {
+                "rulePriority": 2,
+                "selection": {
+                  "tagStatus": "tagged",
+                  "tagPrefixList": ["v", "latest", "main", "master"],
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 10
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+      Tags:
+        - Key: Name
+          Value: !Sub 'customersupport-${Environment}-Agent-ECR'
+        - Key: Purpose
+          Value: 'Agent Docker Images'
+    DeletionPolicy: Delete
+
+  # AgentCore Runtime Execution Role
+  AgentCoreRuntimeExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'customersupport-${Environment}-agent-runtime-execution-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AssumeRolePolicy
+            Effect: Allow
+            Principal:
+              Service: bedrock-agentcore.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                'aws:SourceAccount': !Ref AWS::AccountId
+              ArnLike:
+                'aws:SourceArn': !Sub 'arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:*'
+      Policies:
+        - PolicyName: AgentCoreRuntimeExecutionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ECRImageAccess
+                Effect: Allow
+                Action:
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                Resource:
+                  - !Sub 'arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/bedrock-agentcore-customersupport*'
+              - Effect: Allow
+                Action:
+                  - logs:DescribeLogStreams
+                  - logs:CreateLogGroup
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/bedrock-agentcore/runtimes/*'
+              - Effect: Allow
+                Action:
+                  - logs:DescribeLogGroups
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:*'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/bedrock-agentcore/runtimes/*:log-stream:*'
+              - Sid: ECRTokenAccess
+                Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                  - xray:GetSamplingRules
+                  - xray:GetSamplingTargets
+                Resource: '*'
+              - Effect: Allow
+                Resource: '*'
+                Action: cloudwatch:PutMetricData
+                Condition:
+                  StringEquals:
+                    'cloudwatch:namespace': 'bedrock-agentcore'
+              - Sid: BedrockModelAccess
+                Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource:
+                  - 'arn:aws:bedrock:*::foundation-model/*'
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:*'
+              - Sid: Oauth2Token
+                Effect: Allow
+                Action:
+                  - bedrock-agentcore:GetResourceOauth2Token
+                Resource:
+                  - Fn::ImportValue: !Sub '${GatewayStackName}-OAuth2CredentialProviderArn'
+                  - Fn::ImportValue: !Sub '${GoogleProviderStackName}-GoogleCredentialProviderArn'
+              - Sid: SecretsManager
+                Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - Fn::ImportValue: !Sub '${GatewayStackName}-OAuth2ClientSecretArn'
+                  - Fn::ImportValue: !Sub '${GoogleProviderStackName}-GoogleClientSecretArn'
+              - Sid: BedrockKnowledgeBaseAccess
+                Effect: Allow
+                Action:
+                  - bedrock:Retrieve
+                  - bedrock:RetrieveAndGenerate
+                Resource: !Ref KnowledgeBaseArn
+              - Sid: MemoryAccess
+                Effect: Allow
+                Action:
+                  - bedrock-agentcore:ListMemories
+                  - bedrock-agentcore:ListMemoryRecords
+                  - bedrock-agentcore:RetrieveMemoryRecords
+                  - bedrock-agentcore:GetMemory
+                  - bedrock-agentcore:GetMemoryRecord
+                  - bedrock-agentcore:BatchCreateMemoryRecords
+                  - bedrock-agentcore:BatchDeleteMemoryRecords
+                  - bedrock-agentcore:BatchUpdateMemoryRecords
+                  - bedrock-agentcore:ListActors
+                  - bedrock-agentcore:ListEvents
+                  - bedrock-agentcore:CreateEvent
+                  - bedrock-agentcore:GetEvent
+                Resource:
+                  - !GetAtt AgentMemory.MemoryArn
+                  - !Sub '${AgentMemory.MemoryArn}/*'
+      Tags:
+        - Key: Name
+          Value: !Sub 'customersupport-${Environment}-AgentCore-Runtime-Role'
+        - Key: Purpose
+          Value: 'AgentCore Runtime Execution'
+
+  # Memory Execution Role
+  MemoryExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock-agentcore.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                'aws:SourceAccount': !Ref AWS::AccountId
+              ArnLike:
+                'aws:SourceArn': !Sub 'arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:*'
+      Policies:
+        - PolicyName: MemoryBedrockModelAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource:
+                  - 'arn:aws:bedrock:*::foundation-model/*'
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-Memory-Execution-Role'
+
+  # Agent Memory
+  AgentMemory:
+    Type: AWS::BedrockAgentCore::Memory
+    Properties:
+      EventExpiryDuration: 60
+      Name: !Join ['', !Split ['-', !Sub '${AWS::StackName}CustomerSupportMemory']]
+      MemoryExecutionRoleArn: !GetAtt MemoryExecutionRole.Arn
+      MemoryStrategies:
+        - SemanticMemoryStrategy:
+            Name: FactExtractor
+            Namespaces:
+              - "/support/user/{actorId}/facts"
+        - SummaryMemoryStrategy:
+            Name: ConversationSummary
+            Namespaces:
+              - "/support/user/{actorId}/{sessionId}"
+        - UserPreferenceMemoryStrategy:
+            Name: UserPreferences
+            Namespaces:
+              - "/support/user/{actorId}/preferences"
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-Agent-Memory'
+
+  # SSM Parameter for Memory ID
+  MemoryIdParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /app/customersupport/agentcore/memory_id
+      Type: String
+      Value: !GetAtt AgentMemory.MemoryId
+      Description: AgentCore Memory ID for customer support agent
+      Tags:
+        Application: CustomerSupport
+
+  # CodeBuild Service Role for Docker Image Build
+  CodeBuildServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodeBuildLogsPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - "*"
+        - PolicyName: ECRAccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                  - ecr:GetAuthorizationToken
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                  - ecr:PutImage
+                Resource: !GetAtt AgentECRRepository.Arn
+      Tags:
+        - Key: Name
+          Value: !Sub 'customersupport-${Environment}-CodeBuild-Role'
+        - Key: Purpose
+          Value: 'CodeBuild Docker Image Build'
+
+  # CodeBuild Project for Agent Docker Image
+  AgentDockerBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub 'customersupport-${Environment}-agent-docker-build'
+      Description: 'Build and push agent Docker image to ECR'
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Environment:
+        Type: ARM_CONTAINER
+        ComputeType: BUILD_GENERAL1_LARGE
+        Image: aws/codebuild/amazonlinux2-aarch64-standard:3.0
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: ECR_REPOSITORY_URI
+            Value: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${AgentECRRepository}'
+          - Name: ECR_REPOSITORY_NAME
+            Value: !Ref AgentECRRepository
+          - Name: AWS_DEFAULT_REGION
+            Value: !Ref AWS::Region
+          - Name: AWS_ACCOUNT_ID
+            Value: !Ref AWS::AccountId
+      Source:
+        Type: GITHUB
+        Location: 'https://github.com/awslabs/amazon-bedrock-agentcore-samples.git'
+        GitCloneDepth: 1
+        BuildSpec: |
+          version: 0.2
+          phases:
+            pre_build:
+              commands:
+                - echo "Checking current directory and contents..."
+                - pwd
+                - ls -la
+                - echo "Navigating to agent directory..."
+                - cd 02-use-cases/customer-support-assistant
+                - echo "Contents of agent directory:"
+                - ls -la
+                - echo "Checking for Dockerfile..."
+                - cat Dockerfile || echo "Dockerfile not found"
+                - echo "Generating unique image tag..."
+                - export IMAGE_TAG="build-${CODEBUILD_BUILD_NUMBER}"
+                - echo "Image will be tagged as ${IMAGE_TAG}"
+            build:
+              commands:
+                - echo "Starting parallel Docker build and ECR authentication..."
+                - |
+                  docker build -t bedrock-agentcore-arm64 . &
+                  BUILD_PID=$!
+                  aws ecr get-login-password --region $AWS_DEFAULT_REGION | \
+                  docker login --username AWS --password-stdin $ECR_REPOSITORY_URI &
+                  AUTH_PID=$!
+                  echo "Waiting for Docker build to complete..."
+                  wait $BUILD_PID
+                  if [ $? -ne 0 ]; then
+                    echo "Docker build failed"
+                    exit 1
+                  fi
+                  echo "Waiting for ECR authentication to complete..."
+                  wait $AUTH_PID
+                  if [ $? -ne 0 ]; then
+                    echo "ECR authentication failed"
+                    exit 1
+                  fi
+                  echo "Both build and auth completed successfully"
+                - echo "Tagging image with unique tag ${IMAGE_TAG}..."
+                - docker tag bedrock-agentcore-arm64:latest $ECR_REPOSITORY_URI:${IMAGE_TAG}
+            post_build:
+              commands:
+                - echo "Pushing ARM64 image to ECR with unique tag ${IMAGE_TAG}..."
+                - docker push $ECR_REPOSITORY_URI:${IMAGE_TAG}
+                - echo "Build completed at $(date)"
+                - echo "Image tag pushed - ${IMAGE_TAG}"
+      TimeoutInMinutes: 30
+      Tags:
+        - Key: Name
+          Value: !Sub 'customersupport-${Environment}-Agent-Docker-Build'
+        - Key: Purpose
+          Value: 'Agent Docker Image Build'
+
+  # Lambda Execution Role for ECR Image Notification
+  ECRImageNotificationLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: ECRAccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:DescribeImages
+                  - ecr:ListImages
+                Resource: !GetAtt AgentECRRepository.Arn
+        - PolicyName: BedrockAgentCoreAccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock-agentcore:ListAgentRuntimes
+                  - bedrock-agentcore:ListAgentRuntimeEndpoints
+                  - bedrock-agentcore:ListAgentRuntimeVersions
+                  - bedrock-agentcore:GetAgentRuntime
+                  - bedrock-agentcore:GetAgentRuntimeEndpoint
+                  - bedrock-agentcore:UpdateAgentRuntime
+                  - bedrock-agentcore:UpdateAgentRuntimeEndpoint
+                Resource: '*'
+        - PolicyName: IAMPassRole
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource: !GetAtt AgentCoreRuntimeExecutionRole.Arn
+      Tags:
+        - Key: Name
+          Value: !Sub 'customersupport-${Environment}-ECR-Notification-Role'
+        - Key: Purpose
+          Value: 'ECR Image Notification Lambda'
+
+  # Lambda Function for ECR Image Notification
+  ECRImageNotificationFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'customersupport-${Environment}-agent-ecr-notification'
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Role: !GetAtt ECRImageNotificationLambdaRole.Arn
+      Timeout: 300
+      Environment:
+        Variables:
+          AGENT_RUNTIME_ID: !GetAtt AgentRuntime.AgentRuntimeId
+          ECR_REPOSITORY_URI: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${AgentECRRepository}'
+          ROLE_ARN: !GetAtt AgentCoreRuntimeExecutionRole.Arn
+      Code:
+        ZipFile: |
+          import json
+          import logging
+          import boto3
+          import os
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          def lambda_handler(event, context):
+              try:
+                  logger.info(f"Received ECR event: {json.dumps(event)}")
+
+                  # Parse the ECR event
+                  detail = event.get('detail', {})
+                  repository_name = detail.get('repository-name')
+                  image_tag = detail.get('image-tag', 'latest')
+                  action = detail.get('action-type')
+                  result = detail.get('result')
+
+                  logger.info(f"ECR Event - Repository: {repository_name}, Tag: {image_tag}, Action: {action}, Result: {result}")
+
+                  # Only proceed if the push was successful
+                  if action != 'PUSH' or result != 'SUCCESS':
+                      logger.info("Skipping non-push or failed event")
+                      return {
+                          'statusCode': 200,
+                          'body': json.dumps('Event skipped - not a successful push')
+                      }
+
+                  # Get environment variables
+                  agent_runtime_id = os.environ['AGENT_RUNTIME_ID']
+                  ecr_repository_uri = os.environ['ECR_REPOSITORY_URI']
+                  role_arn = os.environ['ROLE_ARN']
+
+                  # Initialize bedrock-agentcore-control client
+                  client = boto3.client('bedrock-agentcore-control')
+
+                  # Get current runtime configuration
+                  logger.info(f"Getting current runtime configuration for: {agent_runtime_id}")
+                  get_response = client.get_agent_runtime(agentRuntimeId=agent_runtime_id)
+
+                  logger.info(f"Current runtime status: {get_response}")
+
+                  # Build new container URI with the pushed image tag
+                  new_container_uri = f"{ecr_repository_uri}:{image_tag}"
+
+                  logger.info(f"Updating runtime to use new container: {new_container_uri}")
+
+                  # Update the runtime with the new container image
+                  update_response = client.update_agent_runtime(
+                      agentRuntimeId=agent_runtime_id,
+                      agentRuntimeArtifact={
+                          'containerConfiguration': {
+                              'containerUri': new_container_uri
+                          }
+                      },
+                      roleArn=role_arn,
+                      protocolConfiguration=get_response['protocolConfiguration'],
+                      authorizerConfiguration=get_response['authorizerConfiguration'],
+                      environmentVariables=get_response['environmentVariables'],
+                  )
+
+                  logger.info(f"Runtime updated successfully. New version: {update_response['agentRuntimeVersion']}")
+
+                  return {
+                      'statusCode': 200,
+                      'body': json.dumps({
+                          'message': 'AgentCore Runtime updated successfully',
+                          'newContainerUri': new_container_uri,
+                          'runtimeId': agent_runtime_id,
+                          'newVersion': update_response['agentRuntimeVersion']
+                      })
+                  }
+
+              except Exception as e:
+                  logger.error(f"Error processing ECR event: {str(e)}", exc_info=True)
+                  return {
+                      'statusCode': 500,
+                      'body': json.dumps({'error': str(e)})
+                  }
+      Tags:
+        - Key: Name
+          Value: !Sub 'customersupport-${Environment}-ECR-Notification-Function'
+
+  # EventBridge Permission for Lambda
+  ECRImageNotificationLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ECRImageNotificationFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ECRImageEventRule.Arn
+
+  # EventBridge Rule for ECR Image Push
+  ECRImageEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub 'customersupport-${Environment}-agent-ecr-push-rule'
+      Description: 'Trigger Lambda when new ECR image is pushed'
+      EventPattern:
+        source:
+          - aws.ecr
+        detail-type:
+          - ECR Image Action
+        detail:
+          action-type:
+            - PUSH
+          result:
+            - SUCCESS
+          repository-name:
+            - !Ref AgentECRRepository
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt ECRImageNotificationFunction.Arn
+          Id: ECRImageNotificationTarget
+
+  # Lambda Execution Role for CodeBuild Trigger
+  CodeBuildTriggerLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: CodeBuildTriggerPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - codebuild:StartBuild
+                  - codebuild:BatchGetBuilds
+                Resource: !GetAtt AgentDockerBuildProject.Arn
+        - PolicyName: ECRCleanupPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:ListImages
+                  - ecr:BatchDeleteImage
+                Resource: !GetAtt AgentECRRepository.Arn
+      Tags:
+        - Key: Name
+          Value: !Sub 'customersupport-${Environment}-CodeBuild-Trigger-Role'
+        - Key: Purpose
+          Value: 'CodeBuild Trigger Lambda'
+
+  # Lambda Function to Trigger CodeBuild
+  CodeBuildTriggerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'customersupport-${Environment}-agent-codebuild'
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Role: !GetAtt CodeBuildTriggerLambdaRole.Arn
+      Timeout: 900
+      Environment:
+        Variables:
+          CODEBUILD_PROJECT_NAME: !Ref AgentDockerBuildProject
+          ECR_REPOSITORY_NAME: !Ref AgentECRRepository
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import urllib3
+          import logging
+          import os
+          import time
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          def empty_ecr_repository(repository_name):
+              try:
+                  logger.info(f"Emptying ECR repository: {repository_name}")
+
+                  ecr_client = boto3.client('ecr')
+
+                  # List all images in the repository
+                  response = ecr_client.list_images(repositoryName=repository_name)
+
+                  if not response['imageIds']:
+                      logger.info("Repository is already empty")
+                      return
+
+                  # Delete all images
+                  logger.info(f"Deleting {len(response['imageIds'])} images from repository")
+                  ecr_client.batch_delete_image(
+                      repositoryName=repository_name,
+                      imageIds=response['imageIds']
+                  )
+
+                  logger.info(f"Successfully emptied ECR repository: {repository_name}")
+
+              except Exception as e:
+                  logger.error(f"Failed to empty ECR repository: {str(e)}")
+                  # Don't raise the exception, as we want deletion to continue
+
+          def lambda_handler(event, context):
+              try:
+                  logger.info(f"Received event: {json.dumps(event)}")
+
+                  request_type = event['RequestType']
+                  project_name = os.environ['CODEBUILD_PROJECT_NAME']
+                  ecr_repository_name = os.environ['ECR_REPOSITORY_NAME']
+
+                  if request_type == 'Create':
+                      # Start CodeBuild project on stack creation and wait for completion
+                      codebuild = boto3.client('codebuild')
+
+                      logger.info(f"Starting CodeBuild project: {project_name}")
+
+                      response = codebuild.start_build(projectName=project_name)
+                      build_id = response['build']['id']
+
+                      logger.info(f"Build started successfully with ID: {build_id}")
+
+                      # Wait for build to complete
+                      max_wait_time = 1800  # 30 minutes
+                      wait_interval = 30    # 30 seconds
+                      elapsed_time = 0
+
+                      while elapsed_time < max_wait_time:
+                          # Check remaining Lambda execution time
+                          remaining_time = context.get_remaining_time_in_millis()
+                          if remaining_time < 60000:  # Less than 1 minute left
+                              logger.error("Lambda timeout approaching, cannot wait for build completion")
+                              send_response(event, context, 'FAILED', {})
+                              return
+
+                          build_status = codebuild.batch_get_builds(ids=[build_id])
+                          current_phase = build_status['builds'][0]['currentPhase']
+                          build_complete = build_status['builds'][0]['buildComplete']
+
+                          logger.info(f"Build status: {current_phase}, Complete: {build_complete}")
+
+                          if build_complete:
+                              final_status = build_status['builds'][0]['buildStatus']
+                              logger.info(f"Build completed with status: {final_status}")
+
+                              if final_status == 'SUCCEEDED':
+                                  send_response(event, context, 'SUCCESS', {})
+                                  return
+                              else:
+                                  send_response(event, context, 'FAILED', {})
+                                  return
+
+                          # Wait before checking again
+                          time.sleep(wait_interval)
+                          elapsed_time += wait_interval
+
+                      # Timeout reached
+                      send_response(event, context, 'FAILED', {})
+
+                  elif request_type == 'Delete':
+                      logger.info("Stack deletion - cleaning up resources")
+
+                      # Clean up ECR repository
+                      empty_ecr_repository(ecr_repository_name)
+
+                      send_response(event, context, 'SUCCESS', {})
+
+                  elif request_type == 'Update':
+                      logger.info("Stack update - no action required")
+                      send_response(event, context, 'SUCCESS', {})
+
+              except Exception as e:
+                  logger.error(f"Error: {str(e)}")
+                  send_response(event, context, 'FAILED', {})
+
+          def send_response(event, context, response_status, response_data):
+              response_body = {
+                  'Status': response_status,
+                  'Reason': 'See CloudWatch Logs',
+                  'PhysicalResourceId': 'CodeBuildTrigger',
+                  'StackId': event['StackId'],
+                  'RequestId': event['RequestId'],
+                  'LogicalResourceId': event['LogicalResourceId'],
+              }
+
+              json_response_body = json.dumps(response_body)
+
+              headers = {
+                  'content-type': '',
+                  'content-length': str(len(json_response_body))
+              }
+
+              http = urllib3.PoolManager()
+              response = http.request('PUT', event['ResponseURL'], body=json_response_body, headers=headers)
+              logger.info(f"Response status: {response.status}")
+
+  # Custom Resource to Trigger CodeBuild on Stack Creation
+  CodeBuildTrigger:
+    Type: AWS::CloudFormation::CustomResource
+    DependsOn: AgentDockerBuildProject
+    Properties:
+      ServiceToken: !GetAtt CodeBuildTriggerFunction.Arn
+
+  # BedrockAgentCore Runtime using build-1 ECR image (first build from CodeBuildTrigger)
+  AgentRuntime:
+    Type: AWS::BedrockAgentCore::Runtime
+    DependsOn:
+      - CodeBuildTrigger
+      - AgentMemory
+    Properties:
+      AgentRuntimeName: !Sub 'customersupport-agent-${Environment}'
+      RoleArn: !GetAtt AgentCoreRuntimeExecutionRole.Arn
+      AgentRuntimeArtifact:
+        ContainerConfiguration:
+          ContainerUri: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${AgentECRRepository}:build-1'
+      ProtocolConfiguration: HTTP
+      AuthorizerConfiguration:
+        CustomJWTAuthorizer:
+          DiscoveryUrl: !Sub
+            - 'https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPoolId}/.well-known/openid-configuration'
+            - UserPoolId:
+                Fn::ImportValue: !Sub '${CognitoStackName}-UserPoolId'
+          AllowedClients:
+            - Fn::ImportValue: !Sub '${CognitoStackName}-WebClientId'
+      EnvironmentVariables:
+        MODEL_ID: !Ref ModelID
+        GATEWAY_URL:
+          Fn::ImportValue: !Sub '${GatewayStackName}-GatewayURL'
+        GATEWAY_PROVIDER_NAME:
+          Fn::ImportValue: !Sub '${GatewayStackName}-GatewayProviderName'
+        GOOGLE_PROVIDER_NAME:
+          Fn::ImportValue: !Sub '${GoogleProviderStackName}-GoogleProviderName'
+        KNOWLEDGE_BASE_ID: !Ref KnowledgeBaseId
+        MEMORY_ID: !GetAtt AgentMemory.MemoryId
+      Tags:
+        Name: !Sub 'customersupport-${Environment}-Agent-Runtime'
+        Purpose: 'AgentCore Runtime'
+
+Outputs:
+  AgentRuntimeArn:
+    Description: 'ARN of the BedrockAgentCore Runtime'
+    Value: !GetAtt AgentRuntime.AgentRuntimeArn
+    Export:
+      Name: !Sub '${AWS::StackName}-AgentRuntimeArn'
+
+  AgentRuntimeId:
+    Description: 'ID of the BedrockAgentCore Runtime'
+    Value: !GetAtt AgentRuntime.AgentRuntimeId
+    Export:
+      Name: !Sub '${AWS::StackName}-AgentRuntimeId'
+
+  AgentRuntimeName:
+    Description: 'Name of the BedrockAgentCore Runtime'
+    Value: !Ref AgentRuntime
+    Export:
+      Name: !Sub '${AWS::StackName}-AgentRuntimeName'
+
+  GatewayProviderName:
+    Description: 'Name of the Gateway OAuth2 provider'
+    Value: !Sub 'GatewayOAuth2Provider-customersupport-${Environment}'
+    Export:
+      Name: !Sub '${AWS::StackName}-GatewayProviderName'
+
+  MemoryId:
+    Description: 'ID of the AgentCore Memory'
+    Value: !GetAtt AgentMemory.MemoryId
+    Export:
+      Name: !Sub '${AWS::StackName}-MemoryId'
+
+  MemoryArn:
+    Description: 'ARN of the AgentCore Memory'
+    Value: !GetAtt AgentMemory.MemoryArn
+    Export:
+      Name: !Sub '${AWS::StackName}-MemoryArn'

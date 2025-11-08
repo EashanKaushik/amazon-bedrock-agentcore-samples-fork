@@ -1,10 +1,10 @@
 from .context import CustomerSupportContext
 from .memory_hook_provider import MemoryHook
-from .utils import get_ssm_parameter
 from agent_config.agent import CustomerSupport  # Your custom agent class
 from agent_config.tools.google import get_calendar_events_today, create_calendar_event
 from bedrock_agentcore.memory import MemoryClient
 import logging
+import os
 
 # Logging setup
 logging.basicConfig(level=logging.INFO)
@@ -23,9 +23,14 @@ async def agent_task(user_message: str, session_id: str, actor_id: str):
         raise RuntimeError("Gateway Access token is none")
     try:
         if agent is None:
+            # Get memory ID from environment variable
+            memory_id = os.environ.get("MEMORY_ID")
+            if not memory_id:
+                raise ValueError("MEMORY_ID environment variable is not set")
+
             memory_hook = MemoryHook(
                 memory_client=memory_client,
-                memory_id=get_ssm_parameter("/app/customersupport/agentcore/memory_id"),
+                memory_id=memory_id,
                 actor_id=actor_id,
                 session_id=session_id,
             )
