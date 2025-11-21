@@ -36,6 +36,12 @@
 			<artifactId>spring-boot-starter-web</artifactId>
 		</dependency>
 
+		<!-- Spring WebFlux for async HTTP client -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-webflux</artifactId>
+		</dependency>
+
 		<!-- Validation -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
@@ -49,27 +55,12 @@
 			<optional>true</optional>
 		</dependency>
 
-		<!-- Google ADK (Agent Development Kit) -->
-		<dependency>
-			<groupId>com.google.adk</groupId>
-			<artifactId>google-adk</artifactId>
-			<version>0.3.0</version>
-		</dependency>
-
 		<!-- Test Dependencies -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-test</artifactId>
 			<scope>test</scope>
-		</dependency>
-
-		<!-- AWS SDK for BedrockAgentCore (test only) -->
-		<dependency>
-			<groupId>software.amazon.awssdk</groupId>
-    		<artifactId>bedrockagentcore</artifactId>
-    		<version>2.38.4</version>
-			<scope>test</scope>
-		</dependency>
+		</dependency>	
 	</dependencies>
 
 	<build>

@@ -9,11 +9,6 @@ Parameters:
     AllowedPattern: ^[a-z0-9-]+$
     ConstraintDescription: Must contain only lowercase letters, numbers, and hyphens
 
-  GoogleApiKey:
-    Type: String
-    Description: Google API Key
-    NoEcho: true
-
   GitHubURL:
     Type: String
     Description: Github URL of the project
@@ -684,14 +679,16 @@ Resources:
       AgentRuntimeName: !Ref AgentName
       RoleArn: !GetAtt AgentCoreRuntimeExecutionRole.Arn
       NetworkConfiguration:
-        NetworkMode: "PUBLIC"
+        NetworkMode: "VPC"
+        NetworkModeConfig: 
+          SecurityGroups: 
+            - "sg-0d7f1f6801be5d55b"
+          Subnets: 
+            - "subnet-0bc36bf0559573e0d"
       AgentRuntimeArtifact:
         ContainerConfiguration:
           ContainerUri: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${AgentECRRepository}:build-1'
       ProtocolConfiguration: HTTP
-      EnvironmentVariables:
-        GOOGLE_API_KEY: !Ref GoogleApiKey
-        GOOGLE_GENAI_USE_VERTEXAI: 0
       Tags:
         Name: !Sub '${AWS::StackName}-Agent-Runtime'
 
