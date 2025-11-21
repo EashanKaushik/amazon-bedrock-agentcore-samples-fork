@@ -297,6 +297,7 @@ Resources:
             paths:
               - '/root/.m2/**/*'
               - '/root/.cache/docker/**/*'
+      SourceVersion: /refs/heads/longrunjava
       TimeoutInMinutes: 30
       Tags:
         - Key: Name

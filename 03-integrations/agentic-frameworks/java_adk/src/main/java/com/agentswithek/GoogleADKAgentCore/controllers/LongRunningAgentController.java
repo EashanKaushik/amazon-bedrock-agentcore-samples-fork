@@ -3,6 +3,7 @@ package com.agentswithek.GoogleADKAgentCore.controllers;
 import com.agentswithek.GoogleADKAgentCore.entities.LongRunningInvocationRequest;
 import com.agentswithek.GoogleADKAgentCore.entities.LongRunningInvocationResponse;
 import com.agentswithek.GoogleADKAgentCore.entities.PingResponse;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -13,6 +14,7 @@ import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.netty.http.client.HttpClient;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Map;
 
@@ -30,8 +32,10 @@ public class LongRunningAgentController {
     private static final String TARGET_URL = "http://10.0.1.184:8080/invoke";
 
     private final WebClient webClient;
+    private final ObjectMapper objectMapper;
 
     public LongRunningAgentController() {
+        this.objectMapper = new ObjectMapper();
         // Configure HTTP client with specific timeout settings
         // Matching Python's timeout config:
         // - connect timeout: 10 seconds
@@ -54,12 +58,25 @@ public class LongRunningAgentController {
      * Receives a request with duration parameter and makes an async HTTP call
      * to an external service that may take a long time to respond.
      *
-     * @param request The invocation request containing input with duration
+     * Parse raw body directly since bedrock-agentcore doesn't set Content-Type header
+     *
+     * @param rawBody The raw request body bytes
      * @return Response with output from the external service
      */
-    @PostMapping("/invocations")
-    public ResponseEntity<?> productionAgent(@RequestBody LongRunningInvocationRequest request) {
-        logger.info("Raw body received: {}", request);
+    @PostMapping(value = "/invocations", consumes = "*/*")
+    public ResponseEntity<?> productionAgent(@RequestBody byte[] rawBody) {
+        String rawBodyString = new String(rawBody, StandardCharsets.UTF_8);
+        logger.info("Raw body received: {}", rawBodyString.isEmpty() ? "empty" : rawBodyString);
+
+        LongRunningInvocationRequest request;
+        try {
+            request = objectMapper.readValue(rawBody, LongRunningInvocationRequest.class);
+            logger.info("Parsed JSON data: {}", request);
+        } catch (Exception e) {
+            logger.error("JSON decode error: {}", e.getMessage());
+            return ResponseEntity.badRequest()
+                    .body(Map.of("error", "Invalid JSON in request body"));
+        }
 
         if (request == null || request.getInput() == null) {
             logger.error("Invalid payload - missing 'input' key: {}", request);
