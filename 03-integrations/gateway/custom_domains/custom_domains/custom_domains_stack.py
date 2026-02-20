@@ -1,3 +1,4 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 import aws_cdk as cdk
 from aws_cdk import (
     CfnOutput,
