@@ -9,6 +9,7 @@ from aws_cdk import (
     aws_cloudfront_origins as origins,
     aws_cloudwatch as cw,
     aws_cloudwatch_actions as cw_actions,
+    aws_iam as iam,
     aws_lambda as _lambda,
     aws_route53 as route53,
     aws_route53_targets as targets,
@@ -17,6 +18,7 @@ from aws_cdk import (
     aws_sns as sns,
     aws_wafv2 as wafv2,
 )
+from cdk_nag import NagSuppressions, NagPackSuppression
 from constructs import Construct
 
 
@@ -38,6 +40,20 @@ class CustomDomainsStack(Stack):
                 exclude_punctuation=True,
                 password_length=32,
             ),
+        )
+        NagSuppressions.add_resource_suppressions(
+            origin_verify_secret,
+            [
+                NagPackSuppression(
+                    id="AwsSolutions-SMG4",
+                    reason=(
+                        "OriginVerifySecret is a static CloudFront origin-verification "
+                        "header, not a rotatable credential. Rotating it would require "
+                        "coordinated atomic updates across CloudFront, Secrets Manager, "
+                        "and the Lambda environment variable."
+                    ),
+                ),
+            ],
         )
         origin_secret_value = origin_verify_secret.secret_value.unsafe_unwrap()
 
@@ -133,16 +149,41 @@ class CustomDomainsStack(Stack):
             ],
         )
 
+        NagSuppressions.add_resource_suppressions(
+            log_bucket,
+            [
+                NagPackSuppression(
+                    id="AwsSolutions-S1",
+                    reason=(
+                        "This IS the access-log destination bucket. Enabling access "
+                        "logging on a log bucket creates circular logging."
+                    ),
+                ),
+            ],
+        )
+
         # SNS topic for alarms
         alarm_topic = sns.Topic(
             self, "AlarmTopic", display_name="AgentCore Gateway Alarms"
+        )
+        alarm_topic.add_to_resource_policy(
+            iam.PolicyStatement(
+                sid="EnforceSSL",
+                effect=iam.Effect.DENY,
+                principals=[iam.AnyPrincipal()],
+                actions=["sns:Publish"],
+                resources=[alarm_topic.topic_arn],
+                conditions={
+                    "Bool": {"aws:SecureTransport": "false"},
+                },
+            )
         )
 
         # Lambda@Edge to rewrite OAuth protected resource response
         oauth_rewrite_fn = cloudfront.experimental.EdgeFunction(
             self,
             "OAuthRewriteV2",
-            runtime=_lambda.Runtime.PYTHON_3_12,
+            runtime=_lambda.Runtime.PYTHON_3_14,
             handler="index.handler",
             code=_lambda.Code.from_inline(
                 "\n".join(
@@ -175,7 +216,7 @@ class CustomDomainsStack(Stack):
         www_auth_rewrite_fn = cloudfront.experimental.EdgeFunction(
             self,
             "WwwAuthRewrite",
-            runtime=_lambda.Runtime.PYTHON_3_12,
+            runtime=_lambda.Runtime.PYTHON_3_14,
             handler="index.handler",
             code=_lambda.Code.from_inline(
                 "\n".join(
@@ -322,7 +363,7 @@ class CustomDomainsStack(Stack):
         origin_verify_fn = _lambda.Function(
             self,
             "OriginVerifyInterceptor",
-            runtime=_lambda.Runtime.PYTHON_3_12,
+            runtime=_lambda.Runtime.PYTHON_3_14,
             handler="index.lambda_handler",
             code=_lambda.Code.from_asset("lambda/origin_verify"),
             environment={
@@ -330,6 +371,21 @@ class CustomDomainsStack(Stack):
                 "ORIGIN_VERIFY_VALUE": origin_secret_value,
             },
         )
+
+        for fn in [oauth_rewrite_fn, www_auth_rewrite_fn, origin_verify_fn]:
+            NagSuppressions.add_resource_suppressions(
+                fn,
+                [
+                    NagPackSuppression(
+                        id="AwsSolutions-IAM4",
+                        reason=(
+                            "AWSLambdaBasicExecutionRole is the minimum managed policy "
+                            "required for Lambda CloudWatch Logs access."
+                        ),
+                    ),
+                ],
+                apply_to_children=True,
+            )
 
         # Outputs
         CfnOutput(
