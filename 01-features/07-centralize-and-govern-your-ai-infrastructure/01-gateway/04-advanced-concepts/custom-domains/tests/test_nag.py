@@ -14,7 +14,6 @@ import aws_cdk as cdk
 from aws_cdk import Environment
 from aws_cdk.assertions import Annotations, Match
 from cdk_nag import AwsSolutionsChecks
-
 from custom_domains.custom_domains_stack import CustomDomainsStack
 
 _CONFIG = {

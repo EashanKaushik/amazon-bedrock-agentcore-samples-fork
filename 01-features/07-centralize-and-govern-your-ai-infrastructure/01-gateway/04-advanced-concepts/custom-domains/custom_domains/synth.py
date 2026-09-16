@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import List
 
 from agwcd.config import Config
 
@@ -55,13 +54,13 @@ class SynthResult:
     function_code: str
     discovery_auth_function_code: str
     routes_json: dict
-    live_behaviors: List[LiveBehaviorSpec]
-    discovery_behaviors: List[DiscoveryBehaviorSpec]
-    gateway_urls: List[str]  # distinct, sorted — one HttpOrigin each
-    origin_verify_gateways: List[str]  # subset of gateway_urls with verification on
+    live_behaviors: list[LiveBehaviorSpec]
+    discovery_behaviors: list[DiscoveryBehaviorSpec]
+    gateway_urls: list[str]  # distinct, sorted — one HttpOrigin each
+    origin_verify_gateways: list[str]  # subset of gateway_urls with verification on
 
 
-def _function_code(routes: List[dict]) -> str:
+def _function_code(routes: list[dict]) -> str:
     """Generate the CloudFront Function (cloudfront-js-1.0 / ES5.1 safe).
 
     ``routes`` are ordered longest-prefix-first. On a match the viewer URI is
@@ -95,10 +94,10 @@ def _function_code(routes: List[dict]) -> str:
 def build(config: Config) -> SynthResult:
     config.validate()
 
-    fn_routes: List[dict] = []
-    routes_json: List[dict] = []
-    live: List[LiveBehaviorSpec] = []
-    discovery: List[DiscoveryBehaviorSpec] = []
+    fn_routes: list[dict] = []
+    routes_json: list[dict] = []
+    live: list[LiveBehaviorSpec] = []
+    discovery: list[DiscoveryBehaviorSpec] = []
     gateways: set[str] = set()
 
     for route, _endpoint, plan in config.iter_plans():

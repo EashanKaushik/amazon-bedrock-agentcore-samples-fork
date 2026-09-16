@@ -15,7 +15,6 @@ from pathlib import Path
 import aws_cdk as cdk
 from aws_cdk import Environment
 from aws_cdk.assertions import Template
-
 from custom_domains.custom_domains_stack import CustomDomainsStack
 
 _CONFIG = {
@@ -41,7 +40,7 @@ def _cache_behavior_patterns(tmp_path: Path):
         env=Environment(account="123456789012", region="us-east-1"),
     )
     template = Template.from_stack(stack)
-    dist = list(template.find_resources("AWS::CloudFront::Distribution").values())[0]
+    dist = next(iter(template.find_resources("AWS::CloudFront::Distribution").values()))
     behaviors = dist["Properties"]["DistributionConfig"]["CacheBehaviors"]
     return [b["PathPattern"] for b in behaviors]
 

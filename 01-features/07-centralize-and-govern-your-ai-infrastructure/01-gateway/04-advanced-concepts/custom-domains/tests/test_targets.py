@@ -1,6 +1,5 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 import pytest
-
 from custom_domains.targets import get_target, target_types
 
 DOMAIN = "mcp.example.com"

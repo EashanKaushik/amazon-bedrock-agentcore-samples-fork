@@ -8,8 +8,6 @@ with its ``url`` rewritten to the custom domain.
 
 from __future__ import annotations
 
-from typing import List, Optional
-
 from .base import DiscoveryRoute, TargetType
 
 # A2A publishes the Agent Card at this well-known path (RFC 8615). We serve one
@@ -24,10 +22,10 @@ class A2aTarget(TargetType):
     requires_target_name = True
     description = "A2A agent (/<targetName>, card at agent-scoped well-known)"
 
-    def _live_base(self, route_prefix: str, target_name: Optional[str]) -> str:
+    def _live_base(self, route_prefix: str, target_name: str | None) -> str:
         return f"{route_prefix}/{target_name}"
 
-    def _origin_prefix(self, target_name: Optional[str]) -> str:
+    def _origin_prefix(self, target_name: str | None) -> str:
         return f"/{target_name}"
 
     def _extra_discovery_routes(
@@ -36,9 +34,9 @@ class A2aTarget(TargetType):
         domain_name: str,
         live_base: str,
         gateway_base: str,
-        target_name: Optional[str],
+        target_name: str | None,
         resource_metadata: str,
-    ) -> List[DiscoveryRoute]:
+    ) -> list[DiscoveryRoute]:
         agent_url = f"https://{domain_name}{live_base}"
         # Agent-scoped well-known so multiple agents can coexist on one domain.
         card_viewer = f"{live_base}{AGENT_CARD_WELL_KNOWN}"

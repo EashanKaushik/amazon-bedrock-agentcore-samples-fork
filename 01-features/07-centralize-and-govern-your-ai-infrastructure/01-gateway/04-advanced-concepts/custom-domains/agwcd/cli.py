@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from typing import List, Optional
 
 import typer
+from custom_domains.targets import get_target, target_types
 
 from agwcd.config import (
     DEFAULT_CONFIG_PATH,
@@ -23,7 +23,6 @@ from agwcd.config import (
     Route,
     _norm_path,
 )
-from custom_domains.targets import get_target, target_types
 
 app = typer.Typer(
     add_completion=False,
@@ -43,7 +42,7 @@ CONFIG_OPT = typer.Option(
 )
 
 
-def _err(msg: str) -> "typer.Exit":
+def _err(msg: str) -> typer.Exit:
     typer.secho(f"error: {msg}", fg=typer.colors.RED, err=True)
     return typer.Exit(1)
 
@@ -65,7 +64,7 @@ def _save(cfg: Config, path: str) -> None:
 # --------------------------------------------------------------------------- #
 # interactive prompt helpers (re-prompt on invalid input)                     #
 # --------------------------------------------------------------------------- #
-def _prompt_domain(default: Optional[str] = None) -> str:
+def _prompt_domain(default: str | None = None) -> str:
     """Prompt for a custom domain, re-asking until it looks like a hostname."""
     while True:
         val = typer.prompt(
@@ -80,7 +79,7 @@ def _prompt_domain(default: Optional[str] = None) -> str:
         )
 
 
-def _prompt_gateway_url(default: Optional[str] = None) -> str:
+def _prompt_gateway_url(default: str | None = None) -> str:
     """Prompt for a gateway URL, re-asking until it is an https:// URL."""
     while True:
         val = typer.prompt("Gateway URL (https://...)", default=default).strip()
@@ -97,7 +96,7 @@ def _prompt_nonempty(label: str) -> str:
         typer.secho("  cannot be empty", fg=typer.colors.RED, err=True)
 
 
-def _prompt_choice(label: str, choices: List[tuple], default: str) -> str:
+def _prompt_choice(label: str, choices: list[tuple], default: str) -> str:
     """Numbered menu over ``choices`` (list of ``(key, description)``).
 
     Accepts either the 1-based number or the literal key; re-prompts otherwise.
@@ -121,7 +120,7 @@ def _prompt_choice(label: str, choices: List[tuple], default: str) -> str:
 # --------------------------------------------------------------------------- #
 @app.command()
 def setup(
-    domain: Optional[str] = typer.Option(
+    domain: str | None = typer.Option(
         None, help="Custom domain, e.g. mcp.example.com."
     ),
     config: str = CONFIG_OPT,
@@ -208,11 +207,11 @@ def init(config: str = CONFIG_OPT):
 # --------------------------------------------------------------------------- #
 @add_app.command("path")
 def add_path(
-    path: Optional[str] = typer.Argument(
+    path: str | None = typer.Argument(
         None, help="URL path, e.g. /sales (or / for root)."
     ),
-    gateway_url: Optional[str] = typer.Option(None, "--gateway-url", "-g"),
-    origin_verify: Optional[bool] = typer.Option(
+    gateway_url: str | None = typer.Option(None, "--gateway-url", "-g"),
+    origin_verify: bool | None = typer.Option(
         None,
         "--origin-verify/--no-origin-verify",
         help="Require CloudFront-only access to this gateway. Prompted if omitted.",
@@ -227,9 +226,9 @@ def add_path(
 def _add_path_interactive(
     cfg: Config,
     config: str,
-    path: Optional[str] = None,
-    gateway_url: Optional[str] = None,
-    origin_verify: Optional[bool] = None,
+    path: str | None = None,
+    gateway_url: str | None = None,
+    origin_verify: bool | None = None,
 ) -> Route:
     """Prompt for (or accept) a path + gateway + origin-verify, append the route,
     then loop offering to add endpoints. Shared by `add path` and `init`."""
@@ -294,13 +293,13 @@ def _add_path_interactive(
 
 @add_app.command("endpoint")
 def add_endpoint(
-    path: Optional[str] = typer.Argument(
+    path: str | None = typer.Argument(
         None, help="Existing path to add an endpoint to."
     ),
-    type: Optional[str] = typer.Option(
+    type: str | None = typer.Option(
         None, "--type", "-t", help=f"One of: {', '.join(target_types())}."
     ),
-    target_name: Optional[str] = typer.Option(None, "--target-name", "-n"),
+    target_name: str | None = typer.Option(None, "--target-name", "-n"),
     config: str = CONFIG_OPT,
 ):
     """Add an endpoint (mcp / http_mcp / http_a2a / …) to an existing path."""
@@ -333,7 +332,7 @@ def _add_endpoint(
     cfg: Config,
     route: Route,
     etype: str,
-    tname: Optional[str],
+    tname: str | None,
     config: str,
 ) -> None:
     route.endpoints.append(Endpoint(type=etype, target_name=tname))
@@ -404,7 +403,7 @@ def remove_path(
 def remove_endpoint(
     path: str = typer.Argument(..., help="Path the endpoint is on."),
     type: str = typer.Argument(..., help="Endpoint type."),
-    target_name: Optional[str] = typer.Option(None, "--target-name", "-n"),
+    target_name: str | None = typer.Option(None, "--target-name", "-n"),
     config: str = CONFIG_OPT,
 ):
     """Remove a single endpoint from a path."""
@@ -425,13 +424,13 @@ def remove_endpoint(
 # --------------------------------------------------------------------------- #
 # cdk passthrough                                                             #
 # --------------------------------------------------------------------------- #
-def _cdk(cdk_cmd: str, config: str, extra: List[str]) -> None:
+def _cdk(cdk_cmd: str, config: str, extra: list[str]) -> None:
     cfg = _load(config)  # validate before invoking CDK
     _ = cfg
     cmd = ["cdk", cdk_cmd, "-c", f"agwcd_config={config}", *extra]
     typer.secho(f"$ {' '.join(cmd)}", fg=typer.colors.BRIGHT_BLACK)
     try:
-        result = subprocess.run(cmd)
+        result = subprocess.run(cmd, check=False)
     except FileNotFoundError:
         raise _err("`cdk` not found — install the AWS CDK CLI (npm i -g aws-cdk)")
     if result.returncode != 0:

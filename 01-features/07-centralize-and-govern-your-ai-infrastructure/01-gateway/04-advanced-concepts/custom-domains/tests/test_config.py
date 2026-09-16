@@ -2,7 +2,6 @@
 import json
 
 import pytest
-
 from agwcd.config import Config, ConfigError, Endpoint, Route, _norm_path
 
 

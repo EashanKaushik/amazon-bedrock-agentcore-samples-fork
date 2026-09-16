@@ -6,8 +6,8 @@ synthesizes one CloudFront distribution that reverse-proxies every configured
 route/endpoint on the custom domain and rewrites OAuth / A2A discovery so it
 resolves against the custom domain instead of the raw gateway hostname.
 
-See plan/​unified-brewing-forest and the module docstrings under
-``custom_domains/targets`` and ``lambda/`` for the architecture.
+See the module docstrings under ``custom_domains/targets`` and ``lambda/``
+for the architecture.
 """
 
 import json
@@ -15,30 +15,60 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import aws_cdk as cdk
+from agwcd.config import Config
 from aws_cdk import (
     CfnOutput,
     RemovalPolicy,
     Stack,
+)
+from aws_cdk import (
     aws_certificatemanager as acm,
+)
+from aws_cdk import (
     aws_cloudfront as cloudfront,
+)
+from aws_cdk import (
     aws_cloudfront_origins as origins,
+)
+from aws_cdk import (
     aws_cloudwatch as cw,
+)
+from aws_cdk import (
     aws_cloudwatch_actions as cw_actions,
+)
+from aws_cdk import (
     aws_iam as iam,
+)
+from aws_cdk import (
     aws_kms as kms,
+)
+from aws_cdk import (
     aws_lambda as _lambda,
+)
+from aws_cdk import (
     aws_logs as logs,
+)
+from aws_cdk import (
     aws_route53 as route53,
+)
+from aws_cdk import (
     aws_route53_targets as targets,
+)
+from aws_cdk import (
     aws_s3 as s3,
+)
+from aws_cdk import (
     aws_secretsmanager as secretsmanager,
+)
+from aws_cdk import (
     aws_sns as sns,
+)
+from aws_cdk import (
     aws_wafv2 as wafv2,
 )
 from cdk_nag import NagPackSuppression, NagSuppressions
 from constructs import Construct
 
-from agwcd.config import Config
 from custom_domains import synth
 
 # Custom origin header — the gateway should reject requests without it.

@@ -9,8 +9,6 @@ path-inserted PRM + the ``WWW-Authenticate`` rewrite.
 
 from __future__ import annotations
 
-from typing import Optional
-
 from .base import TargetType
 
 
@@ -21,8 +19,8 @@ class InferenceTarget(TargetType):
     requires_target_name = False
     description = "Gateway aggregated inference endpoint (/inference)"
 
-    def _live_base(self, route_prefix: str, target_name: Optional[str]) -> str:
+    def _live_base(self, route_prefix: str, target_name: str | None) -> str:
         return f"{route_prefix}/inference"
 
-    def _origin_prefix(self, target_name: Optional[str]) -> str:
+    def _origin_prefix(self, target_name: str | None) -> str:
         return "/inference"

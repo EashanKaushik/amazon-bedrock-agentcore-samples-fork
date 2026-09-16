@@ -4,15 +4,13 @@ class and adding it to ``_TARGETS`` — nothing else in the codebase changes."""
 
 from __future__ import annotations
 
-from typing import Dict, List
-
 from .a2a import A2aTarget
 from .base import TargetType
 from .http_agent import HttpAgentTarget
 from .inference import InferenceTarget
 from .mcp import HttpMcpTarget, McpTarget
 
-_TARGETS: Dict[str, TargetType] = {
+_TARGETS: dict[str, TargetType] = {
     t.type_key: t
     for t in (
         McpTarget(),
@@ -24,7 +22,7 @@ _TARGETS: Dict[str, TargetType] = {
 }
 
 
-def target_types() -> List[str]:
+def target_types() -> list[str]:
     """All registered target-type keys."""
     return list(_TARGETS)
 

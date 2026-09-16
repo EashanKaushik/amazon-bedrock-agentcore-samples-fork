@@ -12,8 +12,6 @@ does publish a card that must be rewritten to the custom domain.
 
 from __future__ import annotations
 
-from typing import Optional
-
 from .base import TargetType
 
 
@@ -24,8 +22,8 @@ class HttpAgentTarget(TargetType):
     requires_target_name = True
     description = "HTTP agent-as-tool, no card (/<targetName>)"
 
-    def _live_base(self, route_prefix: str, target_name: Optional[str]) -> str:
+    def _live_base(self, route_prefix: str, target_name: str | None) -> str:
         return f"{route_prefix}/{target_name}"
 
-    def _origin_prefix(self, target_name: Optional[str]) -> str:
+    def _origin_prefix(self, target_name: str | None) -> str:
         return f"/{target_name}"

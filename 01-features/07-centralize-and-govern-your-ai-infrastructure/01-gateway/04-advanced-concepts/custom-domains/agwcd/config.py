@@ -7,9 +7,9 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterator, List, Optional, Tuple
 
 from custom_domains.targets import EndpointPlan, get_target
 
@@ -17,7 +17,7 @@ DEFAULT_CONFIG_PATH = "agwcd.json"
 
 # Default CloudFront geo allowlist (US + Canada + EU member states) — carried
 # over from the original stack; overridable per-domain in config.
-DEFAULT_GEO_ALLOWLIST: List[str] = [
+DEFAULT_GEO_ALLOWLIST: list[str] = [
     "US",
     "CA",
     "AT",
@@ -61,10 +61,10 @@ class ConfigError(ValueError):
 @dataclass
 class Endpoint:
     type: str
-    target_name: Optional[str] = None
+    target_name: str | None = None
 
     @staticmethod
-    def from_dict(d: dict) -> "Endpoint":
+    def from_dict(d: dict) -> Endpoint:
         return Endpoint(type=d["type"], target_name=d.get("target_name"))
 
     def to_dict(self) -> dict:
@@ -78,14 +78,14 @@ class Endpoint:
 class Route:
     path: str
     gateway_url: str
-    endpoints: List[Endpoint] = field(default_factory=list)
+    endpoints: list[Endpoint] = field(default_factory=list)
     # Opt-in origin verification: inject a per-gateway secret header so the
     # gateway can reject traffic that did not come through CloudFront. Off
     # unless explicitly enabled. Keyed per gateway (see validate()).
     origin_verify: bool = False
 
     @staticmethod
-    def from_dict(d: dict) -> "Route":
+    def from_dict(d: dict) -> Route:
         return Route(
             path=d["path"],
             gateway_url=d["gateway_url"],
@@ -105,14 +105,14 @@ class Route:
 @dataclass
 class Config:
     domain_name: str
-    geo_allowlist: List[str] = field(
+    geo_allowlist: list[str] = field(
         default_factory=lambda: list(DEFAULT_GEO_ALLOWLIST)
     )
-    routes: List[Route] = field(default_factory=list)
+    routes: list[Route] = field(default_factory=list)
 
     # ---- (de)serialization -------------------------------------------------
     @staticmethod
-    def from_dict(d: dict) -> "Config":
+    def from_dict(d: dict) -> Config:
         return Config(
             domain_name=d["domain_name"],
             geo_allowlist=list(d.get("geo_allowlist") or DEFAULT_GEO_ALLOWLIST),
@@ -127,7 +127,7 @@ class Config:
         }
 
     @staticmethod
-    def load(path: str = DEFAULT_CONFIG_PATH) -> "Config":
+    def load(path: str = DEFAULT_CONFIG_PATH) -> Config:
         p = Path(path)
         if not p.exists():
             raise ConfigError(
@@ -146,7 +146,7 @@ class Config:
         Path(path).write_text(json.dumps(self.to_dict(), indent=2) + "\n")
 
     # ---- lookup helpers ----------------------------------------------------
-    def route(self, path: str) -> Optional[Route]:
+    def route(self, path: str) -> Route | None:
         path = _norm_path(path)
         for r in self.routes:
             if _norm_path(r.path) == path:
@@ -202,7 +202,7 @@ class Config:
                 )
             verify_by_gateway[r.gateway_url] = r.origin_verify
 
-            seen_targets: set[Tuple[str, Optional[str]]] = set()
+            seen_targets: set[tuple[str, str | None]] = set()
             for e in r.endpoints:
                 try:
                     tt = get_target(e.type)
@@ -238,12 +238,12 @@ class Config:
                     )
                 seen_patterns[pat] = _ep.type
 
-    def origin_verify_gateways(self) -> List[str]:
+    def origin_verify_gateways(self) -> list[str]:
         """Distinct gateway URLs (sorted) that have origin verification on."""
         return sorted({r.gateway_url for r in self.routes if r.origin_verify})
 
     # ---- expansion ---------------------------------------------------------
-    def iter_plans(self) -> Iterator[Tuple[Route, Endpoint, EndpointPlan]]:
+    def iter_plans(self) -> Iterator[tuple[Route, Endpoint, EndpointPlan]]:
         """Yield (route, endpoint, plan) for every endpoint in the config."""
         for r in self.routes:
             for e in r.endpoints:

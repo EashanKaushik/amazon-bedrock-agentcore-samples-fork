@@ -3,10 +3,9 @@
 
 import json
 
-from typer.testing import CliRunner
-
 from agwcd.cli import app
 from agwcd.config import Config
+from typer.testing import CliRunner
 
 runner = CliRunner()
 GW = "https://gw.gateway.bedrock-agentcore.us-east-1.amazonaws.com"
@@ -28,21 +27,7 @@ def test_init_root_with_one_endpoint(tmp_path):
     path = _cfg(tmp_path)
     # domain / no-geo / attach? yes / path / gateway / verify? no /
     # add endpoint? yes / type mcp / add endpoint? no / deploy? no
-    stdin = "\n".join(
-        [
-            "mcp.example.com",
-            "n",
-            "y",
-            "/",
-            GW,
-            "n",
-            "y",
-            "mcp",
-            "n",
-            "n",
-            "",
-        ]
-    )
+    stdin = f"mcp.example.com\nn\ny\n/\n{GW}\nn\ny\nmcp\nn\nn\n"
     result = runner.invoke(app, ["init", "-c", path], input=stdin)
     assert result.exit_code == 0, result.output
 
@@ -57,25 +42,7 @@ def test_init_root_with_one_endpoint(tmp_path):
 
 def test_init_path_based_two_gateways(tmp_path):
     path = _cfg(tmp_path)
-    stdin = "\n".join(
-        [
-            "mcp.example.com",
-            "n",  # customize geo? no
-            "y",  # attach a gateway now? yes
-            "/it",  # path 1
-            GW,
-            "n",  # origin verify
-            "n",  # add endpoint to /it? no
-            "y",  # attach another gateway? yes
-            "/ht",  # path 2
-            GW2,
-            "n",  # origin verify
-            "n",  # add endpoint to /ht? no
-            "n",  # attach another gateway? no
-            "n",  # deploy? no
-            "",
-        ]
-    )
+    stdin = f"mcp.example.com\nn\ny\n/it\n{GW}\nn\nn\ny\n/ht\n{GW2}\nn\nn\nn\nn\n"
     result = runner.invoke(app, ["init", "-c", path], input=stdin)
     assert result.exit_code == 0, result.output
 
@@ -110,7 +77,7 @@ def test_gateway_url_reprompts_until_https(tmp_path):
     path = _cfg(tmp_path)
     _write(path, Config(domain_name="mcp.example.com", routes=[]))
     # path / bad url -> reprompt -> good url / verify no / add endpoint no
-    stdin = "\n".join(["/", "http://insecure", GW, "n", "n", ""])
+    stdin = f"/\nhttp://insecure\n{GW}\nn\nn\n"
     result = runner.invoke(app, ["add", "path", "-c", path], input=stdin)
     assert result.exit_code == 0, result.output
     cfg = Config.load(path)
@@ -156,7 +123,8 @@ def test_non_interactive_flags_unchanged(tmp_path):
     )
     assert r3.exit_code == 0, r3.output
 
-    data = json.loads(open(path).read())
+    with open(path) as f:
+        data = json.loads(f.read())
     assert data["domain_name"] == "mcp.example.com"
     ep = data["routes"][0]["endpoints"][0]
     assert ep == {"type": "http_mcp", "target_name": "catalog"}

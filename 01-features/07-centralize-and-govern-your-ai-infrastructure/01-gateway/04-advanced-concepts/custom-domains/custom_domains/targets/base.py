@@ -17,7 +17,6 @@ the stack turns that data into CloudFront constructs.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional
 
 # RFC 9728 default well-known path for OAuth Protected Resource Metadata.
 # Shared by the MCP and A2A targets (both advertise a per-endpoint PRM).
@@ -36,7 +35,7 @@ class FunctionEntry:
 
     prefix: str
     origin_prefix: str
-    resource_metadata: Optional[str] = None
+    resource_metadata: str | None = None
 
 
 @dataclass(frozen=True)
@@ -55,8 +54,8 @@ class DiscoveryRoute:
     path: str
     kind: str  # "prm" | "agent_card"
     downstream_url: str
-    overrides: Dict[str, str]
-    resource_metadata: Optional[str] = None
+    overrides: dict[str, str]
+    resource_metadata: str | None = None
 
 
 @dataclass(frozen=True)
@@ -64,13 +63,13 @@ class EndpointPlan:
     """Everything the stack needs to wire up a single endpoint."""
 
     # CloudFront path patterns routed to the gateway origin (live traffic).
-    live_patterns: List[str]
+    live_patterns: list[str]
     # CloudFront path patterns routed to the discovery Lambda origin.
-    discovery_patterns: List[str]
+    discovery_patterns: list[str]
     # Viewer-request function routing-table row for the live paths.
     function_entry: FunctionEntry
     # Discovery documents to synthesize for the discovery Lambda's routes.json.
-    discovery_routes: List[DiscoveryRoute]
+    discovery_routes: list[DiscoveryRoute]
     # Whether live behaviors need the WWW-Authenticate origin-response rewrite.
     needs_www_auth: bool = False
 
@@ -115,11 +114,11 @@ class TargetType:
     #: Human description shown by the CLI.
     description: str = ""
 
-    def _live_base(self, route_prefix: str, target_name: Optional[str]) -> str:
+    def _live_base(self, route_prefix: str, target_name: str | None) -> str:
         """Viewer path of the live endpoint (``route_prefix`` is "" for root)."""
         raise NotImplementedError
 
-    def _origin_prefix(self, target_name: Optional[str]) -> str:
+    def _origin_prefix(self, target_name: str | None) -> str:
         """Path the gateway origin expects (the viewer prefix is stripped to it)."""
         raise NotImplementedError
 
@@ -129,9 +128,9 @@ class TargetType:
         domain_name: str,
         live_base: str,
         gateway_base: str,
-        target_name: Optional[str],
+        target_name: str | None,
         resource_metadata: str,
-    ) -> List[DiscoveryRoute]:
+    ) -> list[DiscoveryRoute]:
         """Discovery docs beyond the PRM (default: none)."""
         return []
 
@@ -141,7 +140,7 @@ class TargetType:
         domain_name: str,
         path: str,
         gateway_url: str,
-        target_name: Optional[str] = None,
+        target_name: str | None = None,
     ) -> EndpointPlan:
         if self.requires_target_name and not target_name:
             raise ValueError(f"{self.type_key} target requires a target_name")

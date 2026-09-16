@@ -23,7 +23,6 @@ import os
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Dict, List, Optional
 
 # Side header carrying the caller's bearer token (see synth.FORWARDED_AUTH_HEADER):
 # the OAC-signed origin request occupies `Authorization`, so a viewer-request
@@ -36,19 +35,19 @@ logger.setLevel(logging.INFO)
 _ROUTES_FILE = Path(__file__).parent / "routes.json"
 # Baked at synth time. Tolerate its absence (e.g. unit tests import this module
 # before a synth has generated the file); real deploys always include it.
-_ROUTES: List[dict] = (
+_ROUTES: list[dict] = (
     json.loads(_ROUTES_FILE.read_text()).get("routes", [])
     if _ROUTES_FILE.exists()
     else []
 )
-_ROUTES_BY_PATH: Dict[str, dict] = {r["path"]: r for r in _ROUTES}
+_ROUTES_BY_PATH: dict[str, dict] = {r["path"]: r for r in _ROUTES}
 
 ORIGIN_VERIFY_HEADER = os.environ.get("ORIGIN_VERIFY_HEADER", "")
 # Map of gateway base URL -> origin-verify secret *ARN*, for the gateways that
 # have verification enabled. The ARN is not sensitive; the value is fetched from
 # Secrets Manager at runtime (cached per warm container). Downstream fetches to
 # those gateways carry the header; all others are sent without it.
-ORIGIN_VERIFY_MAP: Dict[str, str] = json.loads(
+ORIGIN_VERIFY_MAP: dict[str, str] = json.loads(
     os.environ.get("ORIGIN_VERIFY_MAP", "{}")
 )
 # A downstream doc can be slow (an A2A agent card is rendered by invoking the
@@ -59,7 +58,7 @@ FETCH_TIMEOUT_SECONDS = float(os.environ.get("FETCH_TIMEOUT_SECONDS", "20"))
 # blow the Lambda response limit. Default 1 MiB — discovery docs are tiny.
 MAX_DOWNSTREAM_BYTES = int(os.environ.get("MAX_DOWNSTREAM_BYTES", str(1024 * 1024)))
 
-_secret_cache: Dict[str, str] = {}
+_secret_cache: dict[str, str] = {}
 
 
 def _secret_value(arn: str) -> str:
@@ -72,7 +71,7 @@ def _secret_value(arn: str) -> str:
     return _secret_cache[arn]
 
 
-def _origin_verify_value_for(url: str) -> Optional[str]:
+def _origin_verify_value_for(url: str) -> str | None:
     """Return the origin-verify secret value for the gateway serving ``url``."""
     for base, arn in ORIGIN_VERIFY_MAP.items():
         # Exact match or a real path boundary — never a bare prefix, so
@@ -82,7 +81,7 @@ def _origin_verify_value_for(url: str) -> Optional[str]:
     return None
 
 
-def apply_override(kind: str, doc: dict, overrides: Dict[str, str]) -> dict:
+def apply_override(kind: str, doc: dict, overrides: dict[str, str]) -> dict:
     """Override only the custom-domain-facing fields of a discovery document.
 
     Pure function (no I/O) so it can be unit-tested directly.
@@ -108,12 +107,12 @@ def apply_override(kind: str, doc: dict, overrides: Dict[str, str]) -> dict:
     return doc
 
 
-def match_route(path: str) -> Optional[dict]:
+def match_route(path: str) -> dict | None:
     """Find the discovery route for a request path (query stripped)."""
     return _ROUTES_BY_PATH.get(path.split("?", 1)[0])
 
 
-def _fetch_downstream(url: str, auth: Optional[str] = None) -> dict:
+def _fetch_downstream(url: str, auth: str | None = None) -> dict:
     req = urllib.request.Request(url, headers={"Accept": "application/json"})
     value = _origin_verify_value_for(url)
     if ORIGIN_VERIFY_HEADER and value:
